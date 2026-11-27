@@ -1,17 +1,20 @@
 /**
  * GeneralTab — language, week start, journal date format, the space's
- * journal template, and the desktop-only launch-on-login row.
+ * journal template, the way into the Templates view, and the desktop-only
+ * launch-on-login row.
  *
  * Each preference goes through its shared localStorage-backed hook; the
  * AutostartRow owns its own state + IPC.
  */
 
+import { LayoutTemplate } from 'lucide-react'
 import type React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { AutostartRow } from '@/components/settings/AutostartRow'
 import { JournalTemplateRow } from '@/components/settings/JournalTemplateRow'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import {
   Select,
@@ -35,6 +38,7 @@ import {
   SUPPORTED_LOCALES,
 } from '@/lib/i18n/locales'
 import { PREFERENCES, usePreference } from '@/lib/preferences'
+import { useNavigationStore } from '@/stores/navigation'
 
 // #1448 — each journal date-format preset maps to an i18n label key.
 const JOURNAL_DATE_FORMAT_LABELS: Record<JournalDateFormat, string> = {
@@ -52,6 +56,7 @@ const SELECT_TRIGGER_WIDTH = 'sm:w-48'
 
 export function GeneralTab(): React.ReactElement {
   const { t } = useTranslation()
+  const setView = useNavigationStore((s) => s.setView)
   // #4555 — the UI language. `system` follows the device; the other values
   // pin a locale.
   const { language, setLanguage } = useLanguage()
@@ -155,6 +160,14 @@ export function GeneralTab(): React.ReactElement {
         </SettingRow>
 
         <JournalTemplateRow />
+
+        {/* #7155 R21 — the Templates view left the sidebar; this row is its way in. */}
+        <SettingRow label={t('settings.templatesLabel')}>
+          <Button variant="outline" onClick={() => setView('templates')}>
+            <LayoutTemplate />
+            {t('settings.templatesOpen')}
+          </Button>
+        </SettingRow>
 
         <AutostartRow />
       </CardContent>

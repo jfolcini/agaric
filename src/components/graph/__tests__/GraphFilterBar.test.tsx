@@ -110,7 +110,7 @@ describe('GraphFilterBar', () => {
     render(<GraphFilterBar filters={[]} onFiltersChange={onFiltersChange} allTags={sampleTags} />)
 
     expect(screen.getByRole('button', { name: t('graph.filter.addFilter') })).toBeInTheDocument()
-    expect(screen.getByText(t('graph.filter.noFilters'))).toBeInTheDocument()
+    expect(document.querySelector('[data-slot="filter-pill"]')).toBeNull()
     expect(
       screen.queryByRole('button', { name: t('graph.filter.clearAll') }),
     ).not.toBeInTheDocument()
@@ -127,20 +127,18 @@ describe('GraphFilterBar', () => {
     )
   })
 
-  // Visible "Filters" text label adjacent to the icon so sighted touch
-  // users recognize the bar as a filter UI. Hidden on mobile (`hidden sm:inline`)
-  // to preserve the icon-only treatment on coarse-pointer devices.
-  it('renders a visible "Filters" text label adjacent to the icon', () => {
+  // An icon that labels a button sits inside it, not beside it (#7155 R8).
+  it('draws its funnel inside the Add filter button, with no standalone icon or label', () => {
     const { container } = render(
       <GraphFilterBar filters={[]} onFiltersChange={onFiltersChange} allTags={sampleTags} />,
     )
 
-    const label = screen.getByText(t('graph.filter.label'))
-    expect(label).toBeInTheDocument()
-    // Hidden on mobile, visible from `sm:` breakpoint up.
-    expect(label).toHaveClass('hidden', 'sm:inline')
-    // The accessible name on the fieldset (via legend.sr-only) is unchanged.
-    expect(container.querySelector('legend.sr-only')).toHaveTextContent(t('graph.filter.addFilter'))
+    const addButton = screen.getByRole('button', { name: t('graph.filter.addFilter') })
+    expect(addButton.querySelectorAll('svg')).toHaveLength(1)
+    for (const icon of container.querySelectorAll('svg')) {
+      expect(icon.closest('button')).not.toBeNull()
+    }
+    expect(screen.queryByText('Filters')).not.toBeInTheDocument()
   })
 
   it('renders a pill for each active filter', () => {
@@ -714,8 +712,8 @@ describe('GraphFilterBar', () => {
       const onChange = vi.fn<(filters: GraphFilter[]) => void>()
       const { container } = render(<StatefulHarness onChange={onChange} />)
 
-      // Component should still render the empty-state badge — no crash.
-      expect(screen.getByText(t('graph.filter.noFilters'))).toBeInTheDocument()
+      // Component should still render, with no chips — no crash.
+      expect(document.querySelector('[data-slot="filter-pill"]')).toBeNull()
       // Hydration must not have dispatched a corrupt value upstream.
       await waitFor(() => {
         // Allow microtasks to settle; if no dispatch happened, callback
@@ -736,7 +734,7 @@ describe('GraphFilterBar', () => {
       await waitFor(() => {
         expect(onChange).not.toHaveBeenCalled()
       })
-      expect(screen.getByText(t('graph.filter.noFilters'))).toBeInTheDocument()
+      expect(document.querySelector('[data-slot="filter-pill"]')).toBeNull()
     })
 
     // #3791 — the persisted value is `unknown` fresh out of `JSON.parse`;
@@ -802,7 +800,7 @@ describe('GraphFilterBar', () => {
       await waitFor(() => {
         expect(onChange).toHaveBeenCalledWith([])
       })
-      expect(screen.getByText(t('graph.filter.noFilters'))).toBeInTheDocument()
+      expect(document.querySelector('[data-slot="filter-pill"]')).toBeNull()
     })
 
     // #3889 — a wholly-corrupt value must not sit in storage re-warning on
@@ -834,7 +832,7 @@ describe('GraphFilterBar', () => {
       vi.mocked(logger.warn).mockClear()
       render(<StatefulHarness />)
       await waitFor(() => {
-        expect(screen.getByText(t('graph.filter.noFilters'))).toBeInTheDocument()
+        expect(document.querySelector('[data-slot="filter-pill"]')).toBeNull()
       })
       expect(logger.warn).not.toHaveBeenCalled()
     })
@@ -938,7 +936,6 @@ describe('GraphFilterBar', () => {
         render(<StatefulHarness initialFilters={DEFAULT_FILTERS} />)
 
         await waitFor(() => expect(pill()).not.toBeInTheDocument())
-        expect(screen.getByText(t('graph.filter.noFilters'))).toBeInTheDocument()
       })
 
       it('a removed default stays removed on the next mount', async () => {

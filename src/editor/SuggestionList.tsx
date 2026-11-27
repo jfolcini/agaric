@@ -335,7 +335,7 @@ export const SuggestionList = ({
       key={item.id}
       id={optionIds[index]}
       className={cn(
-        'suggestion-item flex w-full items-center rounded-sm px-2 py-1.5 text-left text-sm transition-colors coarse:py-3 coarse:min-h-(--touch-target) touch-target focus-outline',
+        'suggestion-item flex w-full items-center rounded-sm px-2 py-1.5 text-left text-sm transition-colors coarse:py-3 coarse:min-h-(--touch-target) touch-target focus-ring-visible focus-visible:-outline-offset-3',
         index === selectedIndex
           ? 'bg-accent text-accent-foreground'
           : 'hover:bg-accent hover:text-accent-foreground',

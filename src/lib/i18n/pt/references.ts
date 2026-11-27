@@ -124,8 +124,6 @@ export const references: Record<string, string> = {
   'graph.local.depthGroupLabel': 'Profundidade da vizinhança',
   'graph.filter.addFilter': 'Adicionar filtro',
   'graph.filter.addFilterPopoverLabel': 'Adicionar um filtro ao grafo',
-  'graph.filter.label': 'Filtros',
-  'graph.filter.noFilters': 'Nenhum filtro aplicado',
   'graph.filter.clearAll': 'Limpar tudo',
   'graph.filter.apply': 'Aplicar',
   'graph.filter.cancel': 'Cancelar',

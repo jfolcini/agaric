@@ -15,7 +15,7 @@ stepper and date display while keeping the calendar picker available:
 | **Stream** | One continuous column, today pinned at the top and older days loading in as you scroll down. | Toggle in the Journal header. |
 | **Agenda** | Flat task list across a date range, with filters and grouping. | Toggle in the Journal header. |
 
-The Daily view opens its day as a page opens: in page mode with Settings › Editor › *Edit pages as* set to Page, and the *Blocks | Page* switch at the end of the row above the day (on a touch phone, the *Edit as page* / *Edit as blocks* row of the *Page actions* menu there, which also holds the day's *Delete page*, asking first), or `Ctrl+E`, changes it for the day on screen (see [editor.md](editor.md#page-mode)). In page mode the day is one document, so it has no *Add block* button: Enter adds a block, and an empty day takes typing at once, as a new day made from the journal template does on its first block. The Weekly and Stream views edit in blocks whatever the setting says.
+The Daily view's title row works like a page's: the date, the *Blocks | Page* switch, the bookmark and the *Page actions* menu, which holds *Properties…* (the day page's properties, in a dialog; a sheet on a phone) and *Delete page*, asking first; the formatting toolbar sits beneath it. On a touch phone the top bar shows the date, and a row of the bookmark and that menu, which also holds *Edit as page* / *Edit as blocks*, sits above the day. The Daily view opens its day as a page opens: in page mode with Settings › Editor › *Edit pages as* set to Page, and the switch (or its menu row), or `Ctrl+E`, changes it for the day on screen (see [editor.md](editor.md#page-mode)). In page mode the day is one document, so it has no *Add block* button: Enter adds a block, and an empty day takes typing at once, as a new day made from the journal template does on its first block. The Weekly and Stream views edit in blocks whatever the setting says.
 
 Per-space: every space has its own date cursor and mode. Switching spaces restores wherever you left off.
 
@@ -35,15 +35,14 @@ The date picker shows **coloured dots** on days that already have content: one d
 
 ## Due Panel (Daily mode)
 
-The Due Panel surfaces today's tasks that have a due / scheduled / property-derived date.
+The Due Panel, headed *Tasks*, lists a day's open tasks (#7155).
 
-- **Header counts** like *"Due 2 · Scheduled 1 · Properties 1"* — a source breakdown so you can see at a glance where today's load comes from. Every journal section header writes its count this way, the label then the number in the muted count tone: *Overdue 2*, *Completed 3*, an Agenda group's *Projects 4*.
-- **Source filter pills**: *All / Due / Scheduled / Properties*. Click one to narrow the list to that source only.
-- **Hide-before-scheduled toggle**: hides scheduled tasks whose scheduled date hasn't arrived yet (useful if you only want what's actionable now).
-- **Overdue label**: tasks past their due date show *(Xd overdue)*. Clicking jumps to the task in its source page.
-- **Scheduled earlier**: on today, the open tasks (TODO or DOING) whose scheduled date has passed and whose due date has not, each with *(Xd ago)*; a task past its due date is under Overdue only. Together they list every open task carried over from before today, once (#7040).
-- **Task checkbox**: each task row, overdue and upcoming ones too, carries the block's own checkbox, which steps the task's state as a click in the block does.
-- **One task row**: every group of the panel, Overdue, Scheduled earlier and Upcoming included, lists the same row the Agenda does: the checkbox, the task's text, then its priority, its due date (a flag) and scheduled date (a calendar with a clock) as chips, and its source page. On a narrow screen the chips sit under the text, lined up with it. Overdue is told apart by its red heading and each row's red date chip.
+- **Tabs**: on today's page and every later one, *All · Overdue · Today · This week · Later · No date*, each with its count, counted from that page's date; the header carries none. A task goes under the tab its earlier date (due or scheduled) names: *Overdue* before the page's date, *Today* on it, *This week* through the end of that week (Settings › *Week starts on*), *Later* after it, and *No date* with neither. *Today* also lists the day's other dated blocks (a date property) and its projected occurrences. *All* shows each tab's tasks under its name. On a phone the tabs scroll sideways.
+- **A past day**: no tabs, just the open tasks dated that day.
+- **One list, or by page**: each list is sorted by date, then priority. The panel's *Group* button (None / Page, kept per device like the Agenda's grouping) puts each page's tasks under its heading, the pages in the order of their earliest task, then that task's priority.
+- **Overdue label**: a task past its due date shows *(Xd overdue)*, one past its scheduled date *(Xd ago)*, counted from the real today on every page. Clicking jumps to the task in its source page.
+- **Task checkbox**: each task row carries the block's own checkbox, which steps the task's state as a click in the block does.
+- **One task row**: the panel lists the same row the Agenda does: the checkbox, the task's text, then its priority, its due date (a flag) and scheduled date (a calendar with a clock) as chips, and its source page. On a narrow screen the chips sit under the text, lined up with it.
 
 ## Done Panel (Daily mode)
 

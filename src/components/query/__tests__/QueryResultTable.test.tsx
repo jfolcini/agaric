@@ -24,8 +24,7 @@ vi.mock('@tauri-apps/api/core', async () => {
 const LINKED_PAGE_ID = '01KP36KDG2ABCDEFGHJKMNPQRS'
 
 // The content cell renders through the resolve store; stub the hook so the
-// chip has a title to show without standing a store up. (`AlertSection.test.tsx`
-// does the same for the agenda rows fixed by #4705.)
+// chip has a title to show without standing a store up.
 vi.mock('@/hooks/useRichContentCallbacks', () => ({
   useRichContentCallbacks: vi.fn(() => ({
     resolveBlockTitle: vi.fn((id: string) =>

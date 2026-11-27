@@ -688,7 +688,7 @@ export function SearchPanel(): React.ReactElement {
         filters={ast.filters}
         onRemove={handleRemoveFilter}
         onClearAll={handleClearAllFilters}
-        trailing={
+        addFilter={
           <FilterHelperPopover
             onAddTag={handleAddTag}
             onAddPathInclude={handleAddPathInclude}

@@ -5,12 +5,15 @@ import {
   activeAlertDialog,
   activePopover,
   clearConsoleErrors,
+  closePageProperties,
   expect,
   focusBlock,
   getConsoleErrors,
   ipc,
   navigateToView,
   openPage,
+  openPageProperties,
+  openPagePropertiesFromMenu,
   openPropertySheet,
   openSettingsTab,
   reopenPage,
@@ -194,8 +197,9 @@ test.describe('Page Properties table @editor', () => {
     await openPage(page, 'Quick Notes')
   })
 
-  /** Reopen Quick Notes and expand its table, which mounts collapsed. */
+  /** Close the open properties, reopen Quick Notes and open them from the chip naming `count`. */
   async function reopenTable(page: Page, count: number): Promise<void> {
+    await closePageProperties(page)
     await reopenPage(page, 'Quick Notes')
     await page.getByRole('button', { name: `Properties ${count}`, exact: true }).click()
   }
@@ -204,13 +208,12 @@ test.describe('Page Properties table @editor', () => {
     page,
   }) => {
     // Add from the existing `reviewer` definition.
-    await page.getByRole('button', { name: 'Page actions', exact: true }).click()
-    await page.getByRole('menuitem', { name: 'Add property', exact: true }).click()
+    const properties = await openPagePropertiesFromMenu(page)
+    await properties.getByRole('button', { name: 'Add property', exact: true }).click()
     await activePopover(page).getByRole('button', { name: 'Reviewer text', exact: true }).click()
     const reviewer = page.getByRole('textbox', { name: 'reviewer value', exact: true })
     await reviewer.fill('Ana')
     await reviewer.press('Enter')
-    await expect(page.getByRole('button', { name: 'Properties 1', exact: true })).toBeVisible()
     await expect.poll(() => storedProperties(page, QUICK_NOTES)).toEqual({ reviewer: 'Ana' })
 
     await reopenTable(page, 1)
@@ -226,7 +229,6 @@ test.describe('Page Properties table @editor', () => {
     const budget = page.getByRole('textbox', { name: 'budget value', exact: true })
     await budget.fill('1200')
     await budget.press('Enter')
-    await expect(page.getByRole('button', { name: 'Properties 2', exact: true })).toBeVisible()
     await expect
       .poll(() => storedProperties(page, QUICK_NOTES))
       .toEqual({ reviewer: 'Ana', budget: '1200' })
@@ -366,9 +368,9 @@ test.describe('Select option renamed from the page Properties table @editor', ()
       value: { value_text: 'alpha' },
     })
     await openPage(page, 'Meetings')
-    await page.getByRole('button', { name: /^Properties/ }).click()
     const block = page.locator(`[data-testid="sortable-block"][data-block-id="${MTG_1}"]`)
     await expect(block.getByRole('button', { name: 'Project: alpha', exact: true })).toBeVisible()
+    await openPageProperties(page)
 
     await page.getByRole('button', { name: 'Edit options for project', exact: true }).click()
     const editor = activePopover(page)
@@ -376,12 +378,13 @@ test.describe('Select option renamed from the page Properties table @editor', ()
     await editor.getByRole('textbox', { name: 'New name for alpha', exact: true }).fill('apollo')
     await editor.getByRole('button', { name: 'Save option name', exact: true }).click()
 
-    // The same page, not reopened: its block chip and its own value follow.
-    await expect(block.getByRole('button', { name: 'Project: apollo', exact: true })).toBeVisible()
+    // The same page, not reopened: its own value and its block chip follow.
     await page.keyboard.press('Escape')
     await expect(page.getByRole('combobox', { name: 'project value', exact: true })).toHaveText(
       'apollo',
     )
+    await closePageProperties(page)
+    await expect(block.getByRole('button', { name: 'Project: apollo', exact: true })).toBeVisible()
     expect(await storedProperties(page, MTG_1)).toMatchObject({ project: 'apollo' })
     expect(await storedProperties(page, MEETINGS)).toMatchObject({ project: 'apollo' })
 

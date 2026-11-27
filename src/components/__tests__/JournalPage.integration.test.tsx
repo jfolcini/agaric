@@ -330,10 +330,22 @@ describe('JournalPage — Delete page empties the day (#5358)', () => {
     return section
   }
 
-  async function deleteTodayPage(user: ReturnType<typeof userEvent.setup>): Promise<void> {
-    await user.click(
-      await within(todaySection()).findByRole('button', { name: t('pageHeader.deletePage') }),
-    )
+  /** The views that show a day's Delete page. */
+  type DayView = 'daily' | 'weekly' | 'stream'
+
+  async function deleteTodayPage(
+    user: ReturnType<typeof userEvent.setup>,
+    mode: DayView = 'daily',
+  ): Promise<void> {
+    // The day view's delete is in its title row's Page actions menu (#7155 R6);
+    // the multi-day views keep it on the day's heading.
+    const day = within(todaySection())
+    if (mode === 'daily') {
+      await user.click(await day.findByRole('button', { name: t('pageHeader.pageActions') }))
+      await user.click(await screen.findByRole('menuitem', { name: t('pageHeader.deletePage') }))
+    } else {
+      await user.click(await day.findByRole('button', { name: t('pageHeader.deletePage') }))
+    }
     const dialog = await screen.findByRole('alertdialog')
     await user.click(within(dialog).getByRole('button', { name: t('pageHeader.deletePage') }))
     // The mock sends no change feed: once the delete commits, send the `names`
@@ -381,7 +393,7 @@ describe('JournalPage — Delete page empties the day (#5358)', () => {
     await expectTodayEmpty('daily')
   })
 
-  it.each<JournalMode>(['daily', 'weekly', 'stream'])(
+  it.each<DayView>(['daily', 'weekly', 'stream'])(
     'empties a day whose page the %s view created this session',
     async (mode) => {
       const user = userEvent.setup()
@@ -398,7 +410,7 @@ describe('JournalPage — Delete page empties the day (#5358)', () => {
         await user.click(await within(day).findByRole('button', { name: t('agenda.day.addBlock') }))
       }
 
-      await deleteTodayPage(user)
+      await deleteTodayPage(user, mode)
 
       await expectTodayEmpty(mode)
     },

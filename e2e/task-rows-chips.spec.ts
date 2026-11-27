@@ -177,15 +177,12 @@ test.describe('One task row on a phone (#7040 S6) @journal @mobile', () => {
     expect(chip.y, 'date chip top vs title bottom').toBeGreaterThanOrEqual(m.title.bottom - 1)
   })
 
-  test('Overdue and Scheduled earlier tasks are the same rows under a heading, not cards', async ({
-    page,
-  }) => {
+  test('Overdue tasks are the same rows under a heading, not cards', async ({ page }) => {
     await seedSearchBlocks(page, [{ content: 'Plan the offsite', todo: 'TODO', scheduled: -1 }])
     await navigateToView(page, 'Agenda')
     await navigateToView(page, 'Journal')
     const panel = page.getByTestId('due-panel')
-    await expect(panel.getByRole('heading', { name: /Overdue/ })).toBeVisible()
-    await expect(panel.getByRole('heading', { name: /Scheduled earlier/ })).toBeVisible()
+    await expect(panel.getByRole('heading', { name: 'Overdue', exact: true })).toBeVisible()
 
     const plain = await paint(panel.getByTestId('due-panel-item').first())
     for (const task of ['Submit report', 'Plan the offsite']) {

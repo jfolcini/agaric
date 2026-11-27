@@ -102,6 +102,17 @@ beforeEach(() => {
 })
 
 describe('BacklinkFilterBuilder', () => {
+  // An icon that labels a button sits inside it, not beside it (#7155 R8).
+  it('draws its funnel inside the Add filter button, with no standalone icon', () => {
+    const { container } = renderBuilder()
+
+    const addButton = screen.getByRole('button', { name: /Add filter/i })
+    expect(addButton.querySelectorAll('svg')).toHaveLength(1)
+    for (const icon of container.querySelectorAll('svg')) {
+      expect(icon.closest('button')).not.toBeNull()
+    }
+  })
+
   // #5445 — the hosting reference panels used to list every tag at page open.
   describe('tag list loads when the add-filter row opens', () => {
     it('is not requested until "Add filter" is clicked, then once for the active space', async () => {

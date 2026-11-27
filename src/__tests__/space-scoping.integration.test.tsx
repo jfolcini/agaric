@@ -70,13 +70,11 @@ describe(' Phase 4 — space scoping integration', () => {
       isReady: true,
     })
 
-    const { rerender } = renderHook(() =>
-      useDuePanelData({ date: '2025-06-15', sourceFilter: null }),
-    )
+    const { rerender } = renderHook(() => useDuePanelData({ date: '2025-06-15' }))
 
     // First fetch should have been issued under SPACE_A. The hook calls
-    // `listBlocks` (for agenda) and `queryByProperty` (for projected
-    // overdue / upcoming) — both must carry `SPACE_A`. #2248 — `list_blocks`
+    // `listBlocks` (for agenda) and `queryByProperty` (for today's
+    // open tasks) — both must carry `SPACE_A`. #2248 — `list_blocks`
     // now takes a `scope: SpaceScope` (required-active) at the IPC boundary.
     await waitFor(() => {
       const args = lastInvokeArgs('list_blocks')

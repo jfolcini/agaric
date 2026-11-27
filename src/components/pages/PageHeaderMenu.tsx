@@ -64,7 +64,7 @@ export interface PageHeaderMenuProps {
   onKebabOpenChange: (open: boolean) => void
   onAddAlias: () => void
   onAddTag: () => void
-  onAddProperty: () => void
+  onOpenProperties: () => void
   onToggleTemplate: () => void
   onToggleJournalTemplate: () => void
   onExport: () => void
@@ -134,7 +134,7 @@ function menuIds(f: MenuFlags): string[] {
   return [
     'addAlias',
     'addTag',
-    'addProperty',
+    'properties',
     'insertEmoji',
     'openOutline',
     ...(f.hasHistory ? ['pageHistory'] : []),
@@ -188,7 +188,11 @@ function ExportRows({
         <Copy />
         {t('pageHeader.exportMarkdown')}
         {keyboardHints && (
-          <Kbd keys={shortcutHint('exportPageMarkdown')} className={SHORTCUT_HINT_CLASS} />
+          <Kbd
+            keys={shortcutHint('exportPageMarkdown')}
+            tone="muted"
+            className={SHORTCUT_HINT_CLASS}
+          />
         )}
       </button>
       {onSaveMarkdownFile != null && (
@@ -226,7 +230,7 @@ export function PageHeaderMenu({
   onKebabOpenChange,
   onAddAlias,
   onAddTag,
-  onAddProperty,
+  onOpenProperties,
   onToggleTemplate,
   onToggleJournalTemplate,
   onExport,
@@ -446,11 +450,11 @@ export function PageHeaderMenu({
         <button
           type="button"
           className={row}
-          onClick={onAddProperty}
-          {...menuItemProps('addProperty')}
+          onClick={onOpenProperties}
+          {...menuItemProps('properties')}
         >
           <Settings2 />
-          {t('pageHeader.menuAddProperty')}
+          {t('pageHeader.menuProperties')}
         </button>
         <button
           type="button"
@@ -494,7 +498,11 @@ export function PageHeaderMenu({
           <Network />
           {t('pageHeader.showInGraph')}
           {keyboardHints && (
-            <Kbd keys={shortcutHint('showPageInGraph')} className={SHORTCUT_HINT_CLASS} />
+            <Kbd
+              keys={shortcutHint('showPageInGraph')}
+              tone="muted"
+              className={SHORTCUT_HINT_CLASS}
+            />
           )}
         </button>
         {offersNewTab && (
@@ -540,7 +548,11 @@ export function PageHeaderMenu({
           <Undo2 />
           {t('pageHeader.undoAction')}
           {keyboardHints && (
-            <Kbd keys={shortcutHint('undoLastPageOp')} className={SHORTCUT_HINT_CLASS} />
+            <Kbd
+              keys={shortcutHint('undoLastPageOp')}
+              tone="muted"
+              className={SHORTCUT_HINT_CLASS}
+            />
           )}
         </button>
         <button
@@ -553,7 +565,11 @@ export function PageHeaderMenu({
           <Redo2 />
           {t('pageHeader.redoAction')}
           {keyboardHints && (
-            <Kbd keys={shortcutHint('redoLastUndoneOp')} className={SHORTCUT_HINT_CLASS} />
+            <Kbd
+              keys={shortcutHint('redoLastUndoneOp')}
+              tone="muted"
+              className={SHORTCUT_HINT_CLASS}
+            />
           )}
         </button>
         {onEditModeChange != null && (

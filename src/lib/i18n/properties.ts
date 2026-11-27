@@ -485,12 +485,6 @@ export const properties: Record<string, string> = {
   'propertiesView.copyAction': 'Copy to another space…',
   'propertiesView.deleteAction': 'Delete property',
 
-  // Translators: Settings › Tasks & reminders: setting row (label + description) taking a number of
-  // days. "Upcoming" = the Agenda section of that name.
-  'propertiesView.deadlineWarning': 'Deadline warning',
-  'propertiesView.deadlineWarningDesc':
-    "Show tasks due within this many days in the Agenda's Upcoming list. 0 turns it off.",
-
   // Translators: Settings › Properties: lock badge on a built-in (fixed) property, and the label
   // before the space dropdown that picks whose definitions are listed ("Definitions in [space]").
   'propertiesView.builtIn': 'Built-in',

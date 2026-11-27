@@ -6,11 +6,7 @@
  *  - Returns loading state during fetch
  *  - Resolves page titles via batchResolve
  *  - Re-fetches when date changes
- *  - Re-fetches when sourceFilter changes
- *  - Fetches overdue blocks when isToday
- *  - Does not fetch overdue when not today
- *  - Fetches upcoming blocks when warningDays > 0
- *  - Does not fetch upcoming when warningDays is 0
+ *  - Reads every open task when isToday, and none otherwise
  *  - Fetches projected entries
  *  - loadMore fetches next page with cursor
  *  - Handles fetch errors gracefully
@@ -22,19 +18,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // #4412 — `listBlocks` / `batchResolve` / `queryByProperty` retired their
 // hand-written wrappers; the hook calls `commands.*` and unwraps the `Result`
 // envelope, so the spies resolve raw data and the mock wraps it.
-const {
-  mockedListBlocks,
-  mockedBatchResolve,
-  mockedQueryByProperty,
-  mockedListProjectedAgenda,
-  mockedListUnfinishedTasks,
-} = vi.hoisted(() => ({
-  mockedListBlocks: vi.fn(),
-  mockedBatchResolve: vi.fn(),
-  mockedQueryByProperty: vi.fn(),
-  mockedListProjectedAgenda: vi.fn(),
-  mockedListUnfinishedTasks: vi.fn(),
-}))
+const { mockedListBlocks, mockedBatchResolve, mockedQueryByProperty, mockedListProjectedAgenda } =
+  vi.hoisted(() => ({
+    mockedListBlocks: vi.fn(),
+    mockedBatchResolve: vi.fn(),
+    mockedQueryByProperty: vi.fn(),
+    mockedListProjectedAgenda: vi.fn(),
+  }))
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
@@ -47,8 +37,6 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
         mockedBatchResolve(...args).then((data: unknown) => ({ status: 'ok', data })),
       queryByProperty: (...args: unknown[]) =>
         mockedQueryByProperty(...args).then((data: unknown) => ({ status: 'ok', data })),
-      listUnfinishedTasks: (...args: unknown[]) =>
-        mockedListUnfinishedTasks(...args).then((data: unknown) => ({ status: 'ok', data })),
       listProjectedAgenda: (...args: unknown[]) =>
         mockedListProjectedAgenda(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
@@ -116,7 +104,6 @@ beforeEach(() => {
     total_count: null,
   })
   mockedQueryByProperty.mockResolvedValue(emptyResponse)
-  mockedListUnfinishedTasks.mockResolvedValue(emptyResponse)
   // Freeze Date only (not setTimeout/setInterval — waitFor and
   // renderHook rely on real timers). Prevents midnight-boundary flakes
   // where the test's `new Date()` crosses a day boundary mid-assertion.
@@ -138,7 +125,7 @@ describe('useDuePanelData', () => {
       total_count: null,
     })
 
-    const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15', sourceFilter: null }))
+    const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15' }))
 
     await waitFor(() => {
       expect(result.current.blocks).toHaveLength(1)
@@ -160,7 +147,7 @@ describe('useDuePanelData', () => {
       total_count: null,
     })
 
-    const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15', sourceFilter: null }))
+    const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15' }))
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -176,7 +163,7 @@ describe('useDuePanelData', () => {
     })
     mockedListBlocks.mockReturnValue(pendingBlocks as Promise<PageResponse<BlockRow>>)
 
-    const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15', sourceFilter: null }))
+    const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15' }))
 
     // Initially loading
     expect(result.current.loading).toBe(true)
@@ -201,7 +188,7 @@ describe('useDuePanelData', () => {
       { id: 'PAGE1', title: 'Resolved Title', block_type: 'page', deleted: false },
     ])
 
-    const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15', sourceFilter: null }))
+    const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15' }))
 
     await waitFor(() => {
       expect(result.current.pageTitles.get('PAGE1')).toBe('Resolved Title')
@@ -222,7 +209,7 @@ describe('useDuePanelData', () => {
     })
     useResolveStore.getState().batchSet([{ id: 'PAGE1', title: 'Cached Title', deleted: false }])
 
-    const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15', sourceFilter: null }))
+    const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15' }))
 
     await waitFor(() => {
       expect(result.current.pageTitles.get('PAGE1')).toBe('Cached Title')
@@ -233,7 +220,7 @@ describe('useDuePanelData', () => {
   it('re-fetches when date changes', async () => {
     mockedListBlocks.mockResolvedValue(emptyResponse)
 
-    const { rerender } = renderHook(({ date }) => useDuePanelData({ date, sourceFilter: null }), {
+    const { rerender } = renderHook(({ date }) => useDuePanelData({ date }), {
       initialProps: { date: '2025-06-15' },
     })
 
@@ -256,40 +243,13 @@ describe('useDuePanelData', () => {
     })
   })
 
-  it('re-fetches when sourceFilter changes', async () => {
-    mockedListBlocks.mockResolvedValue(emptyResponse)
-
-    const { rerender } = renderHook(
-      ({ sourceFilter }) => useDuePanelData({ date: '2025-06-15', sourceFilter }),
-      { initialProps: { sourceFilter: null as string | null } },
-    )
+  it('reads no open tasks for a day other than today', async () => {
+    renderHook(() => useDuePanelData({ date: '2025-06-15' }))
 
     await waitFor(() => {
       expect(mockedListBlocks).toHaveBeenCalled()
     })
 
-    mockedListBlocks.mockClear()
-
-    rerender({ sourceFilter: 'column:due_date' })
-
-    await waitFor(() => {
-      expect(mockedListBlocks).toHaveBeenCalledWith(
-        expect.objectContaining({ source: 'column:due_date' }),
-        { kind: 'active', space_id: 'SPACE_1' },
-      )
-    })
-  })
-
-  it('does not fetch overdue when not today', async () => {
-    renderHook(() => useDuePanelData({ date: '2025-06-15', sourceFilter: null }))
-
-    await waitFor(() => {
-      expect(mockedListBlocks).toHaveBeenCalled()
-    })
-
-    // queryByProperty should NOT have been called for overdue since date !== today
-    // (it may be called for upcoming if warningDays > 0, but default is 0)
-    // The overdue fetch is only triggered when isToday is true
     expect(mockedQueryByProperty).not.toHaveBeenCalled()
   })
 
@@ -307,7 +267,7 @@ describe('useDuePanelData', () => {
       total_count: null,
     })
 
-    const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15', sourceFilter: null }))
+    const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15' }))
 
     await waitFor(() => {
       expect(result.current.projectedEntries).toHaveLength(1)
@@ -331,7 +291,7 @@ describe('useDuePanelData', () => {
     mockedListBlocks.mockRejectedValue(new Error('network error'))
     mockedListProjectedAgenda.mockRejectedValue(new Error('network error'))
 
-    const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15', sourceFilter: null }))
+    const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15' }))
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -350,7 +310,7 @@ describe('useDuePanelData', () => {
       total_count: null,
     })
 
-    const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15', sourceFilter: null }))
+    const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15' }))
 
     await waitFor(() => {
       expect(result.current.hasMore).toBe(true)
@@ -397,15 +357,13 @@ describe('useDuePanelData', () => {
       total_count: null,
     })
 
-    const { result, rerender } = renderHook(
-      ({ date }) => useDuePanelData({ date, sourceFilter: null }),
-      { initialProps: { date: '2025-06-15' } },
-    )
+    const { result, rerender } = renderHook(({ date }) => useDuePanelData({ date }), {
+      initialProps: { date: '2025-06-15' },
+    })
 
     await waitFor(() => {
       expect(result.current.blocks.map((b) => b.id)).toEqual(['A1'])
       expect(result.current.hasMore).toBe(true)
-      expect(result.current.nextCursor).toBe('cursor_A_page2')
     })
 
     // The NEXT listBlocks call is the loadMore — hold it deferred so we can
@@ -466,41 +424,6 @@ describe('useDuePanelData', () => {
     expect(result.current.blocks.map((b) => b.id)).not.toContain('A2')
   })
 
-  it('applies property: filter client-side', async () => {
-    mockedListBlocks.mockResolvedValue({
-      items: [
-        makeBlock({ id: 'B1', due_date: '2025-06-15', scheduled_date: null }),
-        makeBlock({ id: 'B2', due_date: null, scheduled_date: null }),
-      ],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
-
-    const { result } = renderHook(() =>
-      useDuePanelData({ date: '2025-06-15', sourceFilter: 'property:' }),
-    )
-
-    await waitFor(() => {
-      // Only B2 should remain (B1 has due_date matching the date)
-      expect(result.current.blocks).toHaveLength(1)
-      expect(result.current.blocks[0]?.id).toBe('B2')
-    })
-  })
-
-  it('does not fetch upcoming when warningDays is 0', async () => {
-    localStorage.setItem('agaric:deadlineWarningDays', '0')
-
-    const today = new Date()
-    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-
-    const { result } = renderHook(() => useDuePanelData({ date: todayStr, sourceFilter: null }))
-
-    await waitFor(() => {
-      expect(result.current.upcomingBlocks).toHaveLength(0)
-    })
-  })
-
   it('filters out blocks with empty content', async () => {
     mockedListBlocks.mockResolvedValue({
       items: [
@@ -515,14 +438,13 @@ describe('useDuePanelData', () => {
       total_count: null,
     })
 
-    const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15', sourceFilter: null }))
+    const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15' }))
 
     await waitFor(() => {
       expect(result.current.blocks).toHaveLength(2)
     })
     expect(result.current.blocks[0]?.id).toBe('B1')
     expect(result.current.blocks[1]?.id).toBe('B5')
-    expect(result.current.totalCount).toBe(2)
   })
 
   // #5074 — Agenda and Completed must never show the same block. DonePanel
@@ -534,7 +456,7 @@ describe('useDuePanelData', () => {
   // handler that HONOURS `excludeTodoStates` — the same knob the backend
   // reads. A canned response would answer the same rows however the hook
   // asked, and would still be green with the filter removed entirely.
-  it('drops DONE blocks from the fetched list and the count (#5074)', async () => {
+  it('drops DONE and CANCELLED blocks from the fetched list (#5074)', async () => {
     seedAgendaListBlocks(mockedListBlocks, 'SPACE_1', [
       makeBlock({ id: 'B1', todo_state: 'TODO', content: 'still open', due_date: '2025-06-15' }),
       makeBlock({
@@ -546,18 +468,17 @@ describe('useDuePanelData', () => {
       makeBlock({
         id: 'B3',
         todo_state: 'CANCELLED',
-        content: 'not completed, stays',
+        content: 'cancelled, closed too',
         due_date: '2025-06-15',
       }),
     ])
 
-    const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15', sourceFilter: null }))
+    const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15' }))
 
     await waitFor(() => {
-      expect(result.current.blocks).toHaveLength(2)
+      expect(result.current.blocks).toHaveLength(1)
     })
-    expect(result.current.blocks.map((b) => b.id)).toEqual(['B1', 'B3'])
-    expect(result.current.totalCount).toBe(2)
+    expect(result.current.blocks.map((b) => b.id)).toEqual(['B1'])
   })
 
   it('re-fetches blocks when invalidationKey changes (B-50/F-39)', async () => {
@@ -568,9 +489,7 @@ describe('useDuePanelData', () => {
       total_count: null,
     })
 
-    const { result, rerender } = renderHook(() =>
-      useDuePanelData({ date: '2025-06-15', sourceFilter: null }),
-    )
+    const { result, rerender } = renderHook(() => useDuePanelData({ date: '2025-06-15' }))
 
     await waitFor(() => {
       expect(result.current.blocks).toHaveLength(1)
@@ -599,7 +518,7 @@ describe('useDuePanelData', () => {
     })
   })
 
-  it('sets loading=true synchronously when sourceFilter changes (B-51)', async () => {
+  it('sets loading=true synchronously when the date changes (B-51)', async () => {
     // First render: return blocks so loading settles to false
     mockedListBlocks.mockResolvedValueOnce({
       items: [makeBlock({ id: 'B1' })],
@@ -608,10 +527,9 @@ describe('useDuePanelData', () => {
       total_count: null,
     })
 
-    const { result, rerender } = renderHook(
-      ({ sourceFilter }) => useDuePanelData({ date: '2025-06-15', sourceFilter }),
-      { initialProps: { sourceFilter: null as string | null } },
-    )
+    const { result, rerender } = renderHook(({ date }) => useDuePanelData({ date }), {
+      initialProps: { date: '2025-06-15' },
+    })
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -622,8 +540,8 @@ describe('useDuePanelData', () => {
     // the intermediate synchronous state before the async fetch completes.
     mockedListBlocks.mockReturnValue(new Promise(() => {}) as Promise<PageResponse<BlockRow>>)
 
-    // Change the filter — the useEffect should setLoading(true) synchronously
-    rerender({ sourceFilter: 'column:due_date' })
+    // Change the date — the useEffect should setLoading(true) synchronously
+    rerender({ date: '2025-06-16' })
 
     // On the very next render, loading must be true even though the async
     // doFetch hasn't run yet. This prevents the panel from disappearing.
@@ -653,7 +571,7 @@ describe('useDuePanelData', () => {
       { id: ULID_B, title: 'Tag Page', block_type: 'page', deleted: false },
     ])
 
-    renderHook(() => useDuePanelData({ date: '2025-06-15', sourceFilter: null }))
+    renderHook(() => useDuePanelData({ date: '2025-06-15' }))
 
     await waitFor(() => {
       expect(mockedBatchResolve).toHaveBeenCalled()
@@ -680,265 +598,122 @@ describe('useDuePanelData', () => {
     expect(extractUlidRefs('')).toHaveLength(0)
   })
 
-  it('lists open tasks scheduled before today and not yet due, and none past due (#7040)', async () => {
-    const dayStr = (offset: number) => {
-      const d = new Date()
-      d.setDate(d.getDate() + offset)
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-    }
-    mockedListUnfinishedTasks.mockResolvedValue({
-      items: [
-        makeBlock({ id: 'S1', todo_state: 'TODO', scheduled_date: dayStr(-2), due_date: null }),
-        makeBlock({
-          id: 'S2',
-          todo_state: 'DOING',
-          scheduled_date: dayStr(-1),
-          due_date: dayStr(3),
-        }),
-        makeBlock({
-          id: 'S3',
-          todo_state: 'TODO',
-          scheduled_date: dayStr(-2),
-          due_date: dayStr(-1),
-        }),
-        makeBlock({ id: 'S4', todo_state: 'TODO', scheduled_date: null, due_date: dayStr(-1) }),
-      ],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
-
-    const { result } = renderHook(() => useDuePanelData({ date: dayStr(0), sourceFilter: null }))
-
-    await waitFor(() => {
-      expect(result.current.scheduledEarlierBlocks.map((b) => b.id)).toEqual(['S1', 'S2'])
-    })
-    expect(mockedListUnfinishedTasks).toHaveBeenCalledWith(
-      dayStr(0),
-      ['TODO', 'DOING'],
-      null,
-      200,
-      expect.anything(),
-    )
-  })
-
-  it('leaves out a task due today or in the warning window, which other sections list (#7040)', async () => {
-    localStorage.setItem('agaric:deadlineWarningDays', '7')
-    const dayStr = (offset: number) => {
-      const d = new Date()
-      d.setDate(d.getDate() + offset)
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-    }
-    mockedListUnfinishedTasks.mockResolvedValue({
-      items: [
-        makeBlock({
-          id: 'TODAY',
-          todo_state: 'TODO',
-          scheduled_date: dayStr(-1),
-          due_date: dayStr(0),
-        }),
-        makeBlock({
-          id: 'SOON',
-          todo_state: 'TODO',
-          scheduled_date: dayStr(-1),
-          due_date: dayStr(7),
-        }),
-        makeBlock({
-          id: 'LATER',
-          todo_state: 'TODO',
-          scheduled_date: dayStr(-1),
-          due_date: dayStr(8),
-        }),
-        makeBlock({
-          id: 'UNDATED',
-          todo_state: 'DOING',
-          scheduled_date: dayStr(-2),
-          due_date: null,
-        }),
-      ],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
-
-    const { result } = renderHook(() => useDuePanelData({ date: dayStr(0), sourceFilter: null }))
-
-    await waitFor(() => {
-      expect(result.current.scheduledEarlierBlocks.map((b) => b.id)).toEqual(['LATER', 'UNDATED'])
-    })
-  })
-
-  it('reads every page of unfinished tasks (#7040)', async () => {
-    const dayStr = (offset: number) => {
-      const d = new Date()
-      d.setDate(d.getDate() + offset)
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-    }
+  it('reads every open task, page by page, on today (#7155)', async () => {
     const page = (id: string, next: string | null) => ({
-      items: [makeBlock({ id, todo_state: 'TODO', scheduled_date: dayStr(-3), due_date: null })],
+      items: [makeBlock({ id, todo_state: 'TODO', due_date: null, scheduled_date: null })],
       next_cursor: next,
       has_more: next != null,
       total_count: null,
     })
-    mockedListUnfinishedTasks
+    mockedQueryByProperty
       .mockResolvedValueOnce(page('P1', 'CURSOR2'))
       .mockResolvedValueOnce(page('P2', null))
 
-    const { result } = renderHook(() => useDuePanelData({ date: dayStr(0), sourceFilter: null }))
+    const { result } = renderHook(() => useDuePanelData({ date: '2026-04-15' }))
 
     await waitFor(() => {
-      expect(result.current.scheduledEarlierBlocks.map((b) => b.id)).toEqual(['P1', 'P2'])
+      expect(result.current.openTasks.map((b) => b.id)).toEqual(['P1', 'P2'])
     })
-    expect(mockedListUnfinishedTasks).toHaveBeenLastCalledWith(
-      dayStr(0),
-      ['TODO', 'DOING'],
-      'CURSOR2',
-      200,
-      expect.anything(),
+    expect(result.current.openTasksLoading).toBe(false)
+    expect(mockedQueryByProperty).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        key: 'todo_state',
+        valueTextIn: ['TODO', 'DOING'],
+        contentNonEmpty: true,
+        cursor: 'CURSOR2',
+      }),
+      { kind: 'active', space_id: 'SPACE_1' },
     )
   })
 
-  it('fetches no earlier-scheduled tasks for a day other than today', async () => {
-    const { result } = renderHook(() => useDuePanelData({ date: '2025-01-15', sourceFilter: null }))
+  it('reads the open tasks on a later page too, and none on a past one (#7155)', async () => {
+    const { rerender } = renderHook(({ date }) => useDuePanelData({ date }), {
+      initialProps: { date: '2026-04-20' },
+    })
+    await waitFor(() => expect(mockedQueryByProperty).toHaveBeenCalledTimes(1))
 
-    await waitFor(() => expect(result.current.loading).toBe(false))
-    expect(mockedListUnfinishedTasks).not.toHaveBeenCalled()
-    expect(result.current.scheduledEarlierBlocks).toEqual([])
+    mockedQueryByProperty.mockClear()
+    rerender({ date: '2026-04-14' })
+    await waitFor(() =>
+      expect(mockedListBlocks).toHaveBeenCalledWith(
+        expect.objectContaining({ date: '2026-04-14' }),
+        expect.anything(),
+      ),
+    )
+    expect(mockedQueryByProperty).not.toHaveBeenCalled()
   })
 
-  it('overdue batchResolve includes content ULIDs (B-55)', async () => {
-    const ULID_REF = '01ABCDEFGHJKLMNPQRSTUVWXYZ'
-    const today = new Date()
-    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-    const yesterday = new Date(today)
-    yesterday.setDate(yesterday.getDate() - 1)
-    const yesterdayStr = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`
+  // A date step clears the shared titles (the day's own read starts over), so the
+  // open tasks must resolve theirs again: the panel stays mounted from one later
+  // page to the next.
+  it("keeps the open tasks' page titles across a step between later pages", async () => {
+    mockedQueryByProperty.mockResolvedValue({
+      items: [makeBlock({ id: 'OPEN1', page_id: 'POPEN', todo_state: 'TODO', content: 'Open' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+    mockedBatchResolve.mockResolvedValue([
+      { id: 'POPEN', title: 'Open page', block_type: 'page', deleted: false },
+    ])
+    const { result, rerender } = renderHook(({ date }) => useDuePanelData({ date }), {
+      initialProps: { date: '2026-04-20' },
+    })
+    await waitFor(() => expect(result.current.pageTitles.get('POPEN')).toBe('Open page'))
 
+    rerender({ date: '2026-04-21' })
+    await waitFor(() =>
+      expect(mockedListBlocks).toHaveBeenCalledWith(
+        expect.objectContaining({ date: '2026-04-21' }),
+        expect.anything(),
+      ),
+    )
+    await waitFor(() => expect(result.current.pageTitles.get('POPEN')).toBe('Open page'))
+  })
+
+  it('open tasks batchResolve includes page ids and content ULIDs (B-55)', async () => {
+    const ULID_REF = '01ABCDEFGHJKLMNPQRSTUVWXYZ'
     mockedQueryByProperty.mockResolvedValue({
       items: [
         makeBlock({
-          id: 'OD1',
-          parent_id: 'POVER',
-          page_id: 'POVER',
-          due_date: yesterdayStr,
+          id: 'OPEN1',
+          page_id: 'POPEN',
           todo_state: 'TODO',
-          content: `Overdue ref [[${ULID_REF}]]`,
+          content: `Open ref [[${ULID_REF}]]`,
         }),
       ],
       next_cursor: null,
       has_more: false,
       total_count: null,
     })
-    mockedBatchResolve.mockResolvedValue([
-      { id: 'POVER', title: 'Overdue Parent', block_type: 'page', deleted: false },
-      { id: ULID_REF, title: 'Ref Page', block_type: 'page', deleted: false },
-    ])
 
-    renderHook(() => useDuePanelData({ date: todayStr, sourceFilter: null }))
+    renderHook(() => useDuePanelData({ date: '2026-04-15' }))
 
     await waitFor(() => {
-      // Find the batchResolve call that includes 'POVER' (overdue effect)
-      const overdueCall = mockedBatchResolve.mock.calls.find(
-        (args) => Array.isArray(args[0]) && (args[0] as string[]).includes('POVER'),
+      const call = mockedBatchResolve.mock.calls.find(
+        (args) => Array.isArray(args[0]) && (args[0] as string[]).includes('POPEN'),
       )
-      expect(overdueCall).toBeDefined()
-      const resolvedIds = overdueCall?.[0] as string[]
-      expect(resolvedIds).toContain('POVER')
-      expect(resolvedIds).toContain(ULID_REF)
+      expect(call?.[0]).toEqual(expect.arrayContaining(['POPEN', ULID_REF]))
     })
   })
 
-  // #738 sub-2 — the overdue query must push `excludeTodoStates: ['DONE']`
-  // and `contentNonEmpty: true` into SQL (mirroring DonePanel) so DONE /
-  // empty-content rows no longer occupy the bounded 200-row window and
-  // starve genuinely overdue TODOs.
-  it('pushes excludeTodoStates=[DONE] + contentNonEmpty into the overdue SQL query (#738)', async () => {
-    const today = new Date()
-    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  it('logs an open tasks fetch failure via logger.warn and lists none', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const fetchErr = new Error('queryByProperty boom')
+    mockedQueryByProperty.mockRejectedValue(fetchErr)
 
-    renderHook(() => useDuePanelData({ date: todayStr, sourceFilter: null }))
+    const { result } = renderHook(() => useDuePanelData({ date: '2026-04-15' }))
 
     await waitFor(() => {
-      const overdueCall = mockedQueryByProperty.mock.calls.find(
-        (args) =>
-          args[0]?.key === 'due_date' &&
-          Array.isArray(args[0]?.valueDateRange) &&
-          args[0]?.valueDateRange?.[0] === '0001-01-01',
-      )
-      expect(overdueCall).toBeDefined()
-      expect(overdueCall?.[0]).toEqual(
-        expect.objectContaining({
-          key: 'due_date',
-          excludeTodoStates: ['DONE'],
-          contentNonEmpty: true,
-        }),
+      expect(warnSpy).toHaveBeenCalledWith(
+        'useDuePanelData',
+        'open tasks fetch failed',
+        { date: '2026-04-15' },
+        fetchErr,
       )
     })
-  })
-
-  it('pushes DONE and empty-content exclusions into the upcoming SQL query (#3284)', async () => {
-    localStorage.setItem('agaric:deadlineWarningDays', '7')
-
-    renderHook(() => useDuePanelData({ date: '2026-04-15', sourceFilter: null }))
-
-    await waitFor(() => {
-      const upcomingCall = mockedQueryByProperty.mock.calls.find(
-        (args) =>
-          args[0]?.key === 'due_date' &&
-          args[0]?.valueDateRange?.[0] === '2026-04-16' &&
-          args[0]?.valueDateRange?.[1] === '2026-04-23',
-      )
-      expect(upcomingCall).toBeDefined()
-      expect(upcomingCall?.[0]).toEqual(
-        expect.objectContaining({
-          excludeTodoStates: ['DONE'],
-          contentNonEmpty: true,
-        }),
-      )
-    })
-  })
-
-  it('upcoming batchResolve includes content ULIDs (B-55)', async () => {
-    const ULID_REF = '01ABCDEFGHJKLMNPQRSTUVWXYZ'
-    const today = new Date()
-    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-    const tomorrow = new Date(today)
-    tomorrow.setDate(tomorrow.getDate() + 1)
-    const tomorrowStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`
-
-    localStorage.setItem('agaric:deadlineWarningDays', '7')
-
-    mockedQueryByProperty.mockResolvedValue({
-      items: [
-        makeBlock({
-          id: 'UP1',
-          parent_id: 'PUPCOMING',
-          page_id: 'PUPCOMING',
-          due_date: tomorrowStr,
-          todo_state: 'TODO',
-          content: `Upcoming ref [[${ULID_REF}]]`,
-        }),
-      ],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
-    mockedBatchResolve.mockResolvedValue([
-      { id: 'PUPCOMING', title: 'Upcoming Parent', block_type: 'page', deleted: false },
-      { id: ULID_REF, title: 'Ref Page', block_type: 'page', deleted: false },
-    ])
-
-    renderHook(() => useDuePanelData({ date: todayStr, sourceFilter: null }))
-
-    await waitFor(() => {
-      const upcomingCall = mockedBatchResolve.mock.calls.find(
-        (args) => Array.isArray(args[0]) && (args[0] as string[]).includes('PUPCOMING'),
-      )
-      expect(upcomingCall).toBeDefined()
-      const resolvedIds = upcomingCall?.[0] as string[]
-      expect(resolvedIds).toContain('PUPCOMING')
-      expect(resolvedIds).toContain(ULID_REF)
-    })
+    expect(result.current.openTasks).toEqual([])
+    warnSpy.mockRestore()
   })
 
   it('projected batchResolve includes content ULIDs (B-55)', async () => {
@@ -966,7 +741,7 @@ describe('useDuePanelData', () => {
       { id: ULID_REF, title: 'Ref Page', block_type: 'page', deleted: false },
     ])
 
-    renderHook(() => useDuePanelData({ date: '2025-06-15', sourceFilter: null }))
+    renderHook(() => useDuePanelData({ date: '2025-06-15' }))
 
     await waitFor(() => {
       const projectedCall = mockedBatchResolve.mock.calls.find(
@@ -977,38 +752,6 @@ describe('useDuePanelData', () => {
       expect(resolvedIds).toContain('PPROJ')
       expect(resolvedIds).toContain(ULID_REF)
     })
-  })
-
-  it('logs overdue and upcoming fetch failures via logger.warn ()', async () => {
-    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-    localStorage.setItem('agaric:deadlineWarningDays', '7')
-
-    // Both effects run only when date === today, and upcoming additionally
-    // requires warningDays > 0. Both share the same queryByProperty IPC,
-    // so a single rejection drives both bare catch blocks.
-    const today = new Date()
-    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-    const fetchErr = new Error('queryByProperty boom')
-    mockedQueryByProperty.mockRejectedValue(fetchErr)
-
-    renderHook(() => useDuePanelData({ date: todayStr, sourceFilter: null }))
-
-    await waitFor(() => {
-      expect(warnSpy).toHaveBeenCalledWith(
-        'useDuePanelData',
-        'overdue fetch failed',
-        { date: todayStr },
-        fetchErr,
-      )
-      expect(warnSpy).toHaveBeenCalledWith(
-        'useDuePanelData',
-        'upcoming fetch failed',
-        { date: todayStr, warningDays: 7 },
-        fetchErr,
-      )
-    })
-
-    warnSpy.mockRestore()
   })
 
   it('skips inner agenda catch side-effects after unmount ()', async () => {
@@ -1043,9 +786,7 @@ describe('useDuePanelData', () => {
       }) as Promise<ResolvedBlock[]>,
     )
 
-    const { unmount } = renderHook(() =>
-      useDuePanelData({ date: '2025-06-15', sourceFilter: null }),
-    )
+    const { unmount } = renderHook(() => useDuePanelData({ date: '2025-06-15' }))
 
     await waitFor(() => {
       expect(mockedBatchResolve).toHaveBeenCalled()
@@ -1072,9 +813,7 @@ describe('useDuePanelData', () => {
       const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
       mockedListProjectedAgenda.mockRejectedValue(new Error('projected boom'))
 
-      const { result } = renderHook(() =>
-        useDuePanelData({ date: '2025-06-15', sourceFilter: null }),
-      )
+      const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15' }))
 
       await waitFor(() => {
         expect(result.current.projectedLoading).toBe(false)
@@ -1098,9 +837,7 @@ describe('useDuePanelData', () => {
         }),
       )
 
-      const { unmount } = renderHook(() =>
-        useDuePanelData({ date: '2025-06-15', sourceFilter: null }),
-      )
+      const { unmount } = renderHook(() => useDuePanelData({ date: '2025-06-15' }))
 
       await waitFor(() => {
         expect(mockedListProjectedAgenda).toHaveBeenCalled()
@@ -1133,7 +870,7 @@ describe('useDuePanelData', () => {
       })
 
       const { result } = renderHook(() =>
-        useDuePanelData({ date: '2026-04-15', sourceFilter: null, excludePageId: 'DAY_PAGE' }),
+        useDuePanelData({ date: '2026-04-15', excludePageId: 'DAY_PAGE' }),
       )
 
       await waitFor(() => {
@@ -1144,7 +881,7 @@ describe('useDuePanelData', () => {
       expect(ids).not.toContain('OWN')
     })
 
-    it('filters the current day page out of overdue blocks (isToday)', async () => {
+    it('filters the current day page out of the open tasks (isToday)', async () => {
       // isToday: date === frozen system date (2026-04-15).
       mockedQueryByProperty.mockResolvedValue({
         items: [
@@ -1167,13 +904,13 @@ describe('useDuePanelData', () => {
       })
 
       const { result } = renderHook(() =>
-        useDuePanelData({ date: '2026-04-15', sourceFilter: null, excludePageId: 'DAY_PAGE' }),
+        useDuePanelData({ date: '2026-04-15', excludePageId: 'DAY_PAGE' }),
       )
 
       await waitFor(() => {
-        expect(result.current.overdueBlocks).toHaveLength(1)
+        expect(result.current.openTasks).toHaveLength(1)
       })
-      expect(result.current.overdueBlocks.map((b) => b.id)).toEqual(['OTHER_OD'])
+      expect(result.current.openTasks.map((b) => b.id)).toEqual(['OTHER_OD'])
     })
 
     it('does not filter when excludePageId is undefined', async () => {
@@ -1187,9 +924,7 @@ describe('useDuePanelData', () => {
         total_count: null,
       })
 
-      const { result } = renderHook(() =>
-        useDuePanelData({ date: '2026-04-15', sourceFilter: null }),
-      )
+      const { result } = renderHook(() => useDuePanelData({ date: '2026-04-15' }))
 
       await waitFor(() => {
         expect(result.current.blocks).toHaveLength(2)
@@ -1248,10 +983,9 @@ describe('projected cache invalidation (#738 sub-3)', () => {
       Promise.resolve(projectedFor(startDate)),
     )
 
-    const { result, rerender } = renderHook(
-      ({ date }) => useDuePanelData({ date, sourceFilter: null }),
-      { initialProps: { date: '2026-04-15' } },
-    )
+    const { result, rerender } = renderHook(({ date }) => useDuePanelData({ date }), {
+      initialProps: { date: '2026-04-15' },
+    })
 
     // Initial fetch for date A populates the cache.
     await waitFor(() => {
@@ -1329,10 +1063,9 @@ describe('projected cache invalidation (#738 sub-3)', () => {
       return Promise.resolve(resolvedFor(ids))
     })
 
-    const { result, rerender } = renderHook(
-      ({ date }) => useDuePanelData({ date, sourceFilter: null }),
-      { initialProps: { date: '2026-04-15' } },
-    )
+    const { result, rerender } = renderHook(({ date }) => useDuePanelData({ date }), {
+      initialProps: { date: '2026-04-15' },
+    })
 
     await waitFor(() => {
       expect(result.current.pageTitles.get('PROJECTED_PARENT_2026-04-15')).toBe(
@@ -1394,9 +1127,7 @@ describe('projected cache invalidation (#738 sub-3)', () => {
       total_count: null,
     })
 
-    const { result, rerender } = renderHook(() =>
-      useDuePanelData({ date: '2026-04-15', sourceFilter: null }),
-    )
+    const { result, rerender } = renderHook(() => useDuePanelData({ date: '2026-04-15' }))
 
     await waitFor(() => {
       expect(result.current.projectedEntries).toHaveLength(1)

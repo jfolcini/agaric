@@ -298,6 +298,8 @@ export const settings: Record<string, string> = {
     'Un día nuevo en este espacio empieza como una copia de esta página.',
   'settings.journalTemplateNone': 'Ninguna',
   'settings.journalTemplateOpen': 'Abrir',
+  'settings.templatesLabel': 'Páginas de plantilla',
+  'settings.templatesOpen': 'Abrir plantillas',
   'settings.journalDateFormatLabel': 'Formato de fecha del diario',
   'settings.journalDateFormatHelp':
     'Cómo se muestran los títulos del diario. Las páginas siempre se guardan como YYYY-MM-DD, así que cambiar esto nunca afecta a los diarios existentes.',
@@ -306,5 +308,4 @@ export const settings: Record<string, string> = {
   'settings.journalDateFormatLong': 'Mes D, YYYY (p. ej., junio 17, 2026)',
   'settings.journalDateFormatSlash': 'DD/MM/YYYY (p. ej., 17/06/2026)',
   'settings.journalDateFormatWeekday': 'Ddd, Mmm D (p. ej., mié, jun 17)',
-  'settings.valueClamped': 'Valor ajustado al rango {{min}}–{{max}}',
 }

@@ -106,8 +106,40 @@ async function closeDrawer(page: Page): Promise<void> {
   await expect(drawer).toHaveCount(0)
 }
 
-async function dismiss(page: Page, presses = 2): Promise<void> {
-  for (let i = 0; i < presses; i++) await page.keyboard.press('Escape')
+/**
+ * Close what is open: Escape on desktop; on a phone, which has no Escape key, a
+ * tap on the top edge of the screen, which no sheet, dialog, menu or select
+ * reaches. A picker in the editor closes when the next step taps elsewhere.
+ */
+async function dismiss(page: Page, profile: Profile, presses = 2): Promise<void> {
+  const layers = page.locator(
+    '[data-slot$="-overlay"][data-state="open"], [data-radix-popper-content-wrapper]',
+  )
+  for (let i = 0; i < presses; i++) {
+    if (profile === 'desktop') {
+      await page.keyboard.press('Escape')
+      continue
+    }
+    const open = await layers.count()
+    if (open === 0) return
+    await page.touchscreen.tap(PROFILES.phone.viewport.width / 2, 2)
+    await expect.poll(() => layers.count()).toBeLessThan(open)
+  }
+}
+
+/**
+ * Enter `text` in the focused field as a soft keyboard does: committed text,
+ * no keydown, on a phone; key presses on desktop.
+ */
+async function enterText(page: Page, profile: Profile, text: string): Promise<void> {
+  if (profile === 'desktop') {
+    await page.keyboard.type(text, { delay: 30 })
+    return
+  }
+  for (const char of text) {
+    await page.keyboard.insertText(char)
+    await page.waitForTimeout(30)
+  }
 }
 
 /** Scroll the tallest scrolling box (the view's own) by `dy`. */
@@ -134,11 +166,12 @@ async function blockMenu(page: Page, profile: Profile, index: number): Promise<v
 }
 
 /** A new block under the second one, holding `text` as typed. */
-async function typeInNewBlock(page: Page, text: string): Promise<void> {
-  await focusBlock(page, 1)
-  await page.keyboard.press('End')
+async function typeInNewBlock(page: Page, profile: Profile, text: string): Promise<void> {
+  const block = await focusBlock(page, 1)
+  // The caret to the end of the text, as a tap there puts it: a phone has no End key.
+  await block.evaluate((el) => document.getSelection()?.collapse(el, el.childNodes.length))
   await page.keyboard.press('Enter')
-  await page.keyboard.type(text, { delay: 30 })
+  await enterText(page, profile, text)
 }
 
 /** Switch the open page or journal day between block mode and page mode. */
@@ -219,7 +252,7 @@ async function views({ page, profile, shot }: Scene): Promise<void> {
   await shot('tag-color-custom', () =>
     tagColor.getByRole('button', { name: 'Custom color', exact: true }).click(),
   )
-  await page.keyboard.press('Escape')
+  await dismiss(page, profile, 1)
   await shot('tag-page-work', () => page.getByTestId('tag-item-work').click())
   await shot('templates', () => navigateToView(page, 'Templates'))
   await shot('graph', async () => {
@@ -232,6 +265,8 @@ async function views({ page, profile, shot }: Scene): Promise<void> {
   await navigateToView(page, 'Settings')
   if (profile === 'phone') await shot('settings')
   for (const [slug, tab, scrolls] of SETTINGS_TABS) {
+    // Settings shows no Keyboard section where no keyboard has shown itself.
+    if (slug === 'keyboard' && profile === 'phone') continue
     await shot(`settings-${slug}`, () => openSettingsTab(page, tab))
     if (scrolls) await shot(`settings-${slug}-scrolled`, () => scrollView(page, 700))
   }
@@ -247,27 +282,27 @@ async function shell({ page, profile, shot }: Scene): Promise<void> {
     await shot('drawer-space-switcher', () =>
       page.getByLabel('Switch space', { exact: true }).click(),
     )
-    await dismiss(page, 1)
+    await dismiss(page, profile, 1)
     await closeDrawer(page)
     await shot('search-sheet', () => page.getByTestId('search-sheet-trigger').click())
     await shot('search-sheet-all-pages', async () => {
       await page.getByTestId('search-sheet-segment-all-pages').click()
       await page.getByTestId('command-palette-input').fill('ro')
     })
-    await dismiss(page)
+    await dismiss(page, profile)
     await shot('quick-capture', () => page.getByTestId('quick-capture-fab').click())
-    await shot('quick-capture-typed', () => page.keyboard.type('Call the dentist tomorrow'))
+    await shot('quick-capture-typed', () => enterText(page, profile, 'Call the dentist tomorrow'))
   } else {
     await shot('space-switcher', () =>
       page.getByRole('combobox', { name: 'Switch space', exact: true }).click(),
     )
-    await dismiss(page)
+    await dismiss(page, profile)
     await shot('command-palette', () => page.getByTestId('header-search-button').click())
     await shot('command-palette-typed', () => page.getByTestId('command-palette-input').fill('ro'))
     await shot('command-palette-commands', () =>
       page.getByTestId('command-palette-input').fill('>'),
     )
-    await dismiss(page)
+    await dismiss(page, profile)
     await shot('quick-capture', () =>
       emitMockEvent(page, 'deeplink:capture', {
         kind: 'prefill',
@@ -291,20 +326,23 @@ async function shell({ page, profile, shot }: Scene): Promise<void> {
     await shot('tab-switcher', () =>
       page.getByRole('button', { name: 'Switch tab', exact: true }).click(),
     )
-    await dismiss(page)
+    await dismiss(page, profile)
     await shot('tooltip', async () => {
       await page.getByTestId('header-search-button').hover()
       await expect(page.getByRole('tooltip')).toBeVisible()
     })
   }
-  await shot('shortcuts', async () => {
-    await dismiss(page)
-    await navigateToView(page, 'Pages')
-    await page.locator('body').click({ position: { x: 1, y: 1 } })
-    await page.keyboard.press('Escape')
-    await page.keyboard.type('?')
-  })
-  await dismiss(page)
+  // A bare phone has no key to open the shortcuts with.
+  if (profile === 'desktop') {
+    await shot('shortcuts', async () => {
+      await dismiss(page, profile)
+      await navigateToView(page, 'Pages')
+      await page.locator('body').click({ position: { x: 1, y: 1 } })
+      await page.keyboard.press('Escape')
+      await page.keyboard.type('?')
+    })
+  }
+  await dismiss(page, profile)
   await shot('bug-report', () =>
     page.evaluate(() =>
       window.dispatchEvent(
@@ -334,7 +372,7 @@ async function editor({ page, profile, shot }: Scene): Promise<void> {
       await focusBlock(page, 2)
       await toolbar.getByRole('button', { name: 'More', exact: true }).click()
     })
-    await dismiss(page)
+    await dismiss(page, profile)
     await shot('toolbar-date-menu', async () => {
       await focusBlock(page, 2)
       await toolbar.getByRole('button', { name: 'Date', exact: true }).click()
@@ -343,36 +381,36 @@ async function editor({ page, profile, shot }: Scene): Promise<void> {
       page.getByTestId('toolbar-date-menu').getByRole('button', { name: 'Set due date' }).click(),
     )
   }
-  await dismiss(page)
-  await shot('slash-menu', () => typeInNewBlock(page, '/'))
-  await dismiss(page)
-  await shot('tag-picker', () => typeInNewBlock(page, '@de'))
-  await dismiss(page)
-  await shot('link-picker', () => typeInNewBlock(page, '[[pro'))
-  await dismiss(page, 3)
+  await dismiss(page, profile)
+  await shot('slash-menu', () => typeInNewBlock(page, profile, '/'))
+  await dismiss(page, profile)
+  await shot('tag-picker', () => typeInNewBlock(page, profile, '@de'))
+  await dismiss(page, profile)
+  await shot('link-picker', () => typeInNewBlock(page, profile, '[[pro'))
+  await dismiss(page, profile, 3)
   await shot('block-menu', () => blockMenu(page, profile, 7))
   await shot('block-properties', () =>
     activeMenu(page)
       .getByRole('menuitem', { name: /Properties/ })
       .click(),
   )
-  await dismiss(page)
+  await dismiss(page, profile)
   await shot('block-history', async () => {
     await blockMenu(page, profile, 2)
     await activeMenu(page)
       .getByRole('menuitem', { name: /History/ })
       .click()
   })
-  await dismiss(page)
+  await dismiss(page, profile)
   const pageActions = page.getByRole('button', { name: 'Page actions' })
   await shot('page-menu', () => pageActions.click())
   await shot('outline', () => page.getByRole('menuitem', { name: 'Open outline' }).click())
-  await dismiss(page)
+  await dismiss(page, profile)
   await shot('delete-page-confirm', async () => {
     await pageActions.click()
     await page.getByRole('menuitem', { name: /Delete page/ }).click()
   })
-  await dismiss(page)
+  await dismiss(page, profile)
   if (profile === 'desktop') {
     await shot('multi-select', async () => {
       const rows = page.locator('[data-testid="sortable-block"] [data-testid="block-static"]')
@@ -380,12 +418,12 @@ async function editor({ page, profile, shot }: Scene): Promise<void> {
         await rows.nth(n).click({ modifiers: ['Control'], position: { x: 6, y: 6 } })
       }
     })
-    await dismiss(page)
+    await dismiss(page, profile)
     await shot('in-page-find', async () => {
       await page.keyboard.press('Control+f')
       await page.keyboard.type('screen')
     })
-    await dismiss(page)
+    await dismiss(page, profile)
   }
   await shot('page-bottom-backlinks', async () => {
     await goToPage(page, profile, 'Projects')
@@ -405,20 +443,20 @@ async function editing({ page, profile, shot }: Scene): Promise<void> {
   await shot('task-chips-focused', () => focusBlock(page, 7))
   await shot('properties-focused', () => focusBlock(page, 8))
   await shot('nested-focused', () => focusBlock(page, 12))
-  await dismiss(page)
+  await dismiss(page, profile)
   await shot('page-mode', () => editAs(page, profile, 'Page'))
   await shot('page-mode-paragraph', () => caretIn(page, 'Ship a'))
   await shot('page-mode-task', () => caretIn(page, 'Audit every screen'))
   await shot('page-mode-nested', () => caretIn(page, 'Most participants'))
-  await dismiss(page)
+  await dismiss(page, profile)
   await editAs(page, profile, 'Blocks')
   await navigateToView(page, 'Journal')
   await shot('day-paragraph-focused', () => focusBlock(page, 0))
   await shot('day-task-focused', () => focusBlock(page, 2))
-  await dismiss(page)
+  await dismiss(page, profile)
   if (profile === 'phone') {
     await shot('day-menu', () => page.getByRole('button', { name: 'Page actions' }).click())
-    await dismiss(page)
+    await dismiss(page, profile)
   }
   await shot('day-page-mode', () => editAs(page, profile, 'Page'))
   await shot('day-page-mode-task', () => caretIn(page, 'Buy groceries'))
@@ -439,15 +477,15 @@ async function states({ page, profile, shot }: Scene): Promise<void> {
   await shot('new-page-dialog', async () => {
     await navigateToView(page, 'Pages')
     await newPage.click()
-    await page.keyboard.type('Weekly review')
+    await enterText(page, profile, 'Weekly review')
   })
-  await dismiss(page)
+  await dismiss(page, profile)
   await shot('new-empty-page', async () => {
     await newPage.click()
-    await page.keyboard.type('Blank page')
+    await enterText(page, profile, 'Blank page')
     await page.keyboard.press('Enter')
   })
-  await dismiss(page)
+  await dismiss(page, profile)
   await switchSpace(page, profile, 'Personal')
   await navigateToView(page, 'Journal')
   await page.evaluate(() => (window as unknown as Hooks).__setMockLatency(5000))
@@ -455,25 +493,27 @@ async function states({ page, profile, shot }: Scene): Promise<void> {
   await page.evaluate(() => (window as unknown as Hooks).__setMockLatency(0))
   await expect(page.locator('[aria-busy="true"]')).toHaveCount(0, { timeout: 15_000 })
   await shot('pages-filter', async () => {
-    await openAddFilter(page)
+    // A sheet on a bare phone, which `openAddFilter`'s popover wait does not see.
+    if (profile === 'phone') await page.getByRole('button', { name: 'Add filter' }).click()
+    else await openAddFilter(page)
   })
-  await dismiss(page)
+  await dismiss(page, profile)
   if (profile === 'phone') {
     await shot('pages-more-menu', () => page.getByTestId('page-browser-more').click())
-    await dismiss(page)
+    await dismiss(page, profile)
   }
   await shot('settings-theme-select', async () => {
     await navigateToView(page, 'Settings')
     await openSettingsTab(page, 'Appearance')
     await page.locator('#theme-select').click()
   })
-  await dismiss(page)
+  await dismiss(page, profile)
   await shot('settings-property-sheet', async () => {
     await navigateToView(page, 'Settings')
     await openSettingsTab(page, 'Properties')
     await page.getByRole('button', { name: 'Edit property project', exact: true }).click()
   })
-  await dismiss(page)
+  await dismiss(page, profile)
   await shot('error-tags', async () => {
     await page.evaluate(() =>
       (window as unknown as Hooks).__injectMockError(
@@ -523,12 +563,15 @@ async function settle(page: Page): Promise<void> {
   await page.waitForTimeout(350)
 }
 
-function shooter(page: Page, dir: string): Scene['shot'] {
+function shooter(page: Page, dir: string, profile: Profile): Scene['shot'] {
   mkdirSync(dir, { recursive: true })
   return async (name, open) => {
     try {
       if (open) await open()
       await settle(page)
+      // A bare phone shows no keyboard UI: hints, shortcut chips, focus rings.
+      if (profile === 'phone')
+        await expect(page.locator('html')).not.toHaveAttribute('data-keyboard')
       await page.screenshot({
         path: join(dir, `${name}.png`),
         animations: 'disabled',
@@ -539,7 +582,7 @@ function shooter(page: Page, dir: string): Scene['shot'] {
       await page
         .screenshot({ path: join(dir, `${name}.failed.png`) })
         .catch((shotErr: unknown) => console.warn(`ui-review: ${name}: ${String(shotErr)}`))
-      await dismiss(page).catch((keyErr: unknown) => console.warn(String(keyErr)))
+      await dismiss(page, profile).catch((keyErr: unknown) => console.warn(String(keyErr)))
     }
   }
 }
@@ -570,7 +613,7 @@ for (const profile of Object.keys(PROFILES) as Profile[]) {
           await page.emulateMedia({ reducedMotion: 'reduce' })
           await waitForBoot(page)
           const dir = join(OUT, `${profile}-${theme}`, name)
-          const shot = shooter(page, dir)
+          const shot = shooter(page, dir, profile)
           // A step between shots that throws ends the scene; the report lists
           // it, and the shots after it as missing, rather than the run dying.
           await scene.run({ page, profile, shot }).catch((err: unknown) => {

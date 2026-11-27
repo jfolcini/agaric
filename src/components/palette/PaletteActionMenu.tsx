@@ -184,11 +184,10 @@ export function PaletteActionMenu({
         >
           <span className="flex-1 text-left">{a.label}</span>
           {a.hint != null && (
-            // #1005 — canonical chip; legible on the menu item's focus/hover
-            // accent fill. Decorative within an interactive row → aria-hidden.
-            // `Kbd` shows `Ctrl` as this platform's mod key.
+            // Decorative within an interactive row → aria-hidden. `Kbd` shows
+            // `Ctrl` as this platform's mod key.
             <span aria-hidden="true" data-testid={`palette-action-${a.id}-hint`}>
-              <Kbd keys={a.hint} />
+              <Kbd keys={a.hint} tone="muted" />
             </span>
           )}
         </button>

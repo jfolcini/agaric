@@ -32,6 +32,14 @@ describe('useHasHardwareKeyboard', () => {
     expect(result.current).toBe(true)
   })
 
+  it('the test reset clears the <html data-keyboard> the latch sets', () => {
+    renderHook(() => useHasHardwareKeyboard())
+    fireEvent.keyDown(document, { key: 'a' })
+    expect(document.documentElement.hasAttribute('data-keyboard')).toBe(true)
+    _resetHardwareKeyboardLatchForTests()
+    expect(document.documentElement.hasAttribute('data-keyboard')).toBe(false)
+  })
+
   it('ignores modifier-only keydowns', () => {
     const { result, rerender } = renderHook(() => useHasHardwareKeyboard())
     for (const key of ['Shift', 'Control', 'Alt', 'Meta']) {

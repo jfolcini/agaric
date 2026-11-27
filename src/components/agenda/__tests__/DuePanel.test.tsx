@@ -2,10 +2,10 @@
  * Tests for DuePanel component (#600).
  *
  * Validates:
- *  1. Renders with items showing count header ("3 Due")
- *  2. Returns null / does not render when no items (totalCount 0)
- *  3. Groups blocks by todo_state in correct order (DOING > TODO > null)
- *  4. Sorts by priority within group (1 > 2 > 3 > null)
+ *  1. The header names the panel, with no counts; today's tabs carry them
+ *  2. Returns null / does not render when no items
+ *  3. Another day's tasks are one flat list
+ *  4. Sorts by date, then priority (1 > 2 > 3 > null)
  *  5. Shows loading spinner during fetch
  *  6. Shows source page breadcrumb from batchResolve
  *  7. Click navigates to source page
@@ -16,7 +16,7 @@
  *  12. A11y audit passes (axe)
  */
 
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -28,19 +28,13 @@ import { t } from '@/lib/i18n'
 // #4412 — `listBlocks` / `batchResolve` / `queryByProperty` retired their
 // hand-written wrappers; the hook calls `commands.*` and unwraps the `Result`
 // envelope, so the spies resolve raw data and the mock wraps it.
-const {
-  mockedListBlocks,
-  mockedBatchResolve,
-  mockedQueryByProperty,
-  mockedListProjectedAgenda,
-  mockedListUnfinishedTasks,
-} = vi.hoisted(() => ({
-  mockedListBlocks: vi.fn(),
-  mockedBatchResolve: vi.fn(),
-  mockedQueryByProperty: vi.fn(),
-  mockedListProjectedAgenda: vi.fn(),
-  mockedListUnfinishedTasks: vi.fn(),
-}))
+const { mockedListBlocks, mockedBatchResolve, mockedQueryByProperty, mockedListProjectedAgenda } =
+  vi.hoisted(() => ({
+    mockedListBlocks: vi.fn(),
+    mockedBatchResolve: vi.fn(),
+    mockedQueryByProperty: vi.fn(),
+    mockedListProjectedAgenda: vi.fn(),
+  }))
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
@@ -57,19 +51,13 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
         mockedQueryByProperty(...args).then((data: unknown) => ({ status: 'ok', data })),
       listProjectedAgenda: (...args: unknown[]) =>
         mockedListProjectedAgenda(...args).then((data: unknown) => ({ status: 'ok', data })),
-      listUnfinishedTasks: (...args: unknown[]) =>
-        mockedListUnfinishedTasks(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
 
-// perf-review Tier 2 #6 (2026-05-14) — mirror the PageBrowser mock so
-// jsdom's zero-height scroll container doesn't collapse the virtual
-// grouped-blocks list to zero rows. Returns every row so existing
-// assertions querying by content / role / test-id still see the full
-// list, unless a test sets `virtualWindow.size` to mount only the first rows.
-const virtualWindow = vi.hoisted(() => ({ size: null as number | null }))
-vi.mock('@tanstack/react-virtual', () => mockReactVirtual({ windowSize: () => virtualWindow.size }))
+// jsdom has no scroll geometry, so the virtualizer would lay out no rows: the
+// mock lays out every one.
+vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 
 vi.mock('@/components/RichContentRenderer', () => ({
   renderRichContent: vi.fn((markdown: string) => markdown),
@@ -140,7 +128,6 @@ const DATE = '2025-06-15'
 
 beforeEach(() => {
   vi.clearAllMocks()
-  virtualWindow.size = null
   clearProjectedCache()
   // #2248 — the agenda fetch (`listBlocksForAgenda`) requires an active space
   // and short-circuits to empty otherwise; seed one so `listBlocks` runs.
@@ -156,7 +143,6 @@ beforeEach(() => {
     total_count: null,
   })
   mockedQueryByProperty.mockResolvedValue(emptyResponse)
-  mockedListUnfinishedTasks.mockResolvedValue(emptyResponse)
   useNavigationStore.setState({
     currentView: 'journal',
     selectedBlockId: null,
@@ -167,19 +153,18 @@ beforeEach(() => {
   })
 })
 
-/** Waits for the panel header's counts to add up to `total`. */
-function findHeaderTotal(total: number): Promise<HTMLElement> {
+/** Waits for the panel to list `count` task rows. */
+function findRows(count: number): Promise<HTMLElement[]> {
   return waitFor(() => {
-    const header = screen.getByTestId('due-panel-header')
-    const counts = [...header.querySelectorAll('[data-variant="metadata"]')]
-    expect(counts.reduce((sum, c) => sum + Number(c.textContent), 0)).toBe(total)
-    return header
+    const rows = screen.getAllByTestId('due-panel-item')
+    expect(rows).toHaveLength(count)
+    return rows
   })
 }
 
 describe('DuePanel', () => {
-  // 1. Renders with items showing count header ("Properties 3": no date matches the day)
-  it('renders header with correct count', async () => {
+  // #7155 R7 — the header names the panel; the counts are on today's tabs only.
+  it('names the panel in its header, with no counts', async () => {
     mockedListBlocks.mockResolvedValue({
       items: [makeBlock({ id: 'B1' }), makeBlock({ id: 'B2' }), makeBlock({ id: 'B3' })],
       next_cursor: null,
@@ -189,21 +174,9 @@ describe('DuePanel', () => {
 
     render(<DuePanel date="2025-06-15" />)
 
-    expect(await screen.findByRole('button', { name: 'Properties 3' })).toBeInTheDocument()
-  })
-
-  // 1b. Singular count
-  it('renders singular count header ("Properties 1")', async () => {
-    mockedListBlocks.mockResolvedValue({
-      items: [makeBlock({ id: 'B1' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
-
-    render(<DuePanel date="2025-06-15" />)
-
-    expect(await screen.findByRole('button', { name: 'Properties 1' })).toBeInTheDocument()
+    await findRows(3)
+    expect(screen.getByTestId('due-panel-header')).toHaveTextContent(/^Tasks$/)
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument()
   })
 
   // 2. Returns null when all sources are empty
@@ -223,8 +196,8 @@ describe('DuePanel', () => {
     expect(screen.queryByLabelText(t('duePanel.duePanelLabel'))).not.toBeInTheDocument()
   })
 
-  // 3. Groups blocks by todo_state in correct order (DOING > TODO > null)
-  it('groups blocks by todo_state in correct order', async () => {
+  // #7155 R7 — another day's tasks are one flat list, with no state groups.
+  it("lists another day's tasks flat, with no group headings", async () => {
     mockedListBlocks.mockResolvedValue({
       items: [
         makeBlock({ id: 'B2', todo_state: 'DOING', content: 'doing block' }),
@@ -238,23 +211,13 @@ describe('DuePanel', () => {
 
     render(<DuePanel date="2025-06-15" />)
 
-    await findHeaderTotal(3)
-
-    // Verify group headers appear in correct order
-    const groupHeaders = screen.getAllByText(/^(DOING|TODO|Other)$/)
-    expect(groupHeaders).toHaveLength(3)
-    expect(groupHeaders[0]).toHaveTextContent(t('duePanel.groupDoing'))
-    expect(groupHeaders[1]).toHaveTextContent(t('duePanel.groupTodo'))
-    expect(groupHeaders[2]).toHaveTextContent(t('duePanel.groupOther'))
+    await findRows(3)
+    expect(screen.queryByRole('heading')).not.toBeInTheDocument()
   })
 
-  // #738 sub-1 — a CANCELLED block was counted in the header but matched
-  // no group, so it was hidden from the list: the header said "3" while
-  // the list showed 2. The CANCELLED group is now rendered so the header
-  // count and the visible rows agree. #5074 removes DONE from the other
-  // end — filtered out of the fetched blocks, so it leaves the header
-  // count too and the two stay in agreement.
-  it('renders a CANCELLED group so the header count matches visible rows (#738)', async () => {
+  // The panel lists open tasks (#7155 D4): DONE is DonePanel's (#5074) and
+  // CANCELLED is closed, both left out in SQL.
+  it('lists the open block and leaves the DONE and CANCELLED ones out', async () => {
     seedAgendaListBlocks(mockedListBlocks, 'SPACE_1', [
       makeBlock({ id: 'B1', todo_state: 'TODO', content: 'todo block', due_date: DATE }),
       makeBlock({ id: 'B2', todo_state: 'DONE', content: 'done block', due_date: DATE }),
@@ -263,21 +226,9 @@ describe('DuePanel', () => {
 
     render(<DuePanel date="2025-06-15" />)
 
-    // Header counts the TODO and the CANCELLED block; the DONE one is
-    // DonePanel's (#5074).
-    await findHeaderTotal(2)
-
-    // The CANCELLED group header and its row are both rendered, so the
-    // count and the list agree (2 counted, 2 visible).
-    const groupHeaders = screen.getAllByText(/^(DOING|TODO|DONE|CANCELLED|Other)$/)
-    expect(groupHeaders.map((h) => h.textContent)).toEqual([
-      t('duePanel.groupTodo'),
-      t('duePanel.groupCancelled'),
-    ])
-    expect(screen.getByText('cancelled block')).toBeInTheDocument()
-
-    const rows = screen.getAllByTestId('due-panel-item')
-    expect(rows).toHaveLength(2)
+    await findRows(1)
+    expect(screen.getByText('todo block')).toBeInTheDocument()
+    expect(screen.queryByText('cancelled block')).not.toBeInTheDocument()
   })
 
   // #5074 — Agenda and Completed must never show the same block, and the
@@ -307,20 +258,17 @@ describe('DuePanel', () => {
 
     const { container } = render(<DuePanel date="2025-06-15" />)
 
-    await findHeaderTotal(2)
+    await findRows(2)
     expect(screen.getByText('doing block')).toBeInTheDocument()
     expect(screen.getByText('todo block')).toBeInTheDocument()
     expect(screen.queryByText('done 0')).not.toBeInTheDocument()
     expect(screen.queryByText('done 49')).not.toBeInTheDocument()
     expect(screen.getAllByTestId('due-panel-item')).toHaveLength(2)
-    expect(
-      screen.getAllByText(/^(DOING|TODO|DONE|CANCELLED|Other)$/).map((h) => h.textContent),
-    ).toEqual([t('duePanel.groupDoing'), t('duePanel.groupTodo')])
     expect(await axe(container)).toHaveNoViolations()
   })
 
   // 4. Sorts by priority within group (1 > 2 > 3 > null)
-  it('sorts by priority within group', async () => {
+  it('sorts by priority', async () => {
     mockedListBlocks.mockResolvedValue({
       items: [
         makeBlock({ id: 'B1', todo_state: 'TODO', priority: null, content: 'no priority' }),
@@ -335,7 +283,7 @@ describe('DuePanel', () => {
 
     render(<DuePanel date="2025-06-15" />)
 
-    await findHeaderTotal(4)
+    await findRows(4)
 
     // Get all block text items within the TODO group
     const items = screen.getAllByText(/priority (one|two|three)|no priority/)
@@ -361,7 +309,7 @@ describe('DuePanel', () => {
 
     render(<DuePanel date="2025-06-15" />)
 
-    await findHeaderTotal(2)
+    await findRows(2)
 
     const items = screen.getAllByText(/(legacy|level) priority/)
     expect(items).toHaveLength(2)
@@ -734,323 +682,6 @@ describe('DuePanel', () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
-  })
-
-  // 13. "All" filter is selected by default
-  it('shows "All" filter selected by default', async () => {
-    mockedListBlocks.mockResolvedValue({
-      items: [makeBlock({ id: 'B1', content: 'filter test block' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
-
-    render(<DuePanel date="2025-06-15" />)
-
-    await screen.findByText('filter test block')
-
-    const allBtn = screen.getByRole('radio', { name: /^All( \(\d+\))?$/ })
-    const dueBtn = screen.getByRole('radio', { name: /^Due( \(\d+\))?$/ })
-    const scheduledBtn = screen.getByRole('radio', { name: /^Scheduled( \(\d+\))?$/ })
-    const propsBtn = screen.getByRole('radio', { name: /^Properties( \(\d+\))?$/ })
-
-    expect(allBtn).toHaveAttribute('aria-checked', 'true')
-    expect(dueBtn).toHaveAttribute('aria-checked', 'false')
-    expect(scheduledBtn).toHaveAttribute('aria-checked', 'false')
-    expect(propsBtn).toHaveAttribute('aria-checked', 'false')
-  })
-
-  // 14. Clicking "Due" filter refetches with agendaSource
-  it('clicking "Due" filter refetches with agendaSource', async () => {
-    const user = userEvent.setup()
-    mockedListBlocks.mockResolvedValue({
-      items: [makeBlock({ id: 'B1', content: 'due filter block' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
-
-    render(<DuePanel date="2025-06-15" />)
-
-    await screen.findByText('due filter block')
-
-    mockedListBlocks.mockClear()
-    mockedListBlocks.mockResolvedValue({
-      items: [makeBlock({ id: 'B2', content: 'filtered due block' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
-
-    const dueBtn = screen.getByRole('radio', { name: /^Due/ })
-    await user.click(dueBtn)
-
-    await waitFor(() => {
-      expect(mockedListBlocks).toHaveBeenCalledWith(
-        expect.objectContaining({ source: 'column:due_date' }),
-        expect.anything(),
-      )
-    })
-
-    expect(dueBtn).toHaveAttribute('aria-checked', 'true')
-  })
-
-  // A segment with no rows: the header counts that segment's zero, not Due's.
-  it('header names the chosen segment when it has no rows', async () => {
-    const user = userEvent.setup()
-    mockedListBlocks.mockResolvedValue({
-      items: [makeBlock({ id: 'B1', content: 'only due', due_date: '2025-06-15' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
-
-    render(<DuePanel date="2025-06-15" />)
-    expect(await screen.findByRole('button', { name: 'Due 1' })).toBeInTheDocument()
-
-    mockedListBlocks.mockResolvedValue({
-      items: [],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
-    await user.click(screen.getByRole('radio', { name: /^Scheduled/ }))
-
-    expect(await screen.findByText(t('duePanel.noItemsForFilter'))).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Scheduled 0' })).toBeInTheDocument()
-  })
-
-  // 15. Clicking "All" clears source filter
-  it('clicking "All" clears source filter', async () => {
-    const user = userEvent.setup()
-    mockedListBlocks.mockResolvedValue({
-      items: [makeBlock({ id: 'B1', content: 'all filter block' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
-
-    render(<DuePanel date="2025-06-15" />)
-
-    await screen.findByText('all filter block')
-
-    // First click "Due" to set a filter
-    const dueBtn = screen.getByRole('radio', { name: /^Due/ })
-    await user.click(dueBtn)
-
-    await waitFor(() => {
-      expect(mockedListBlocks).toHaveBeenCalledWith(
-        expect.objectContaining({ source: 'column:due_date' }),
-        expect.anything(),
-      )
-    })
-
-    mockedListBlocks.mockClear()
-    mockedListBlocks.mockResolvedValue({
-      items: [makeBlock({ id: 'B3', content: 'all blocks again' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
-
-    // Now click "All" to clear the filter
-    const allBtn = screen.getByRole('radio', { name: /^All/ })
-    await user.click(allBtn)
-
-    await waitFor(() => {
-      expect(mockedListBlocks).toHaveBeenCalledWith(
-        expect.objectContaining({ source: null }),
-        expect.anything(),
-      )
-    })
-
-    expect(allBtn).toHaveAttribute('aria-checked', 'true')
-  })
-
-  // 16. Clicking "Properties" filter fetches without agendaSource and filters client-side
-  it('clicking "Properties" filter fetches without agendaSource', async () => {
-    const user = userEvent.setup()
-    mockedListBlocks.mockResolvedValue({
-      items: [makeBlock({ id: 'B1', content: 'props filter block' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
-
-    render(<DuePanel date="2025-06-15" />)
-
-    await screen.findByText('props filter block')
-
-    mockedListBlocks.mockClear()
-    mockedListBlocks.mockResolvedValue({
-      items: [
-        makeBlock({ id: 'B2', content: 'refetched block', due_date: null, scheduled_date: null }),
-      ],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
-
-    const propsBtn = screen.getByRole('radio', { name: /^Properties/ })
-    await user.click(propsBtn)
-
-    await waitFor(() => {
-      expect(mockedListBlocks).toHaveBeenCalledWith(
-        expect.objectContaining({ source: null }),
-        expect.anything(),
-      )
-    })
-
-    expect(propsBtn).toHaveAttribute('aria-checked', 'true')
-  })
-
-  // 17. Properties filter shows only property-sourced blocks
-  it('Properties filter shows only property-sourced blocks', async () => {
-    const user = userEvent.setup()
-    mockedListBlocks.mockResolvedValue({
-      items: [
-        makeBlock({ id: 'B1', content: 'due block', due_date: '2025-06-15', scheduled_date: null }),
-        makeBlock({
-          id: 'B2',
-          content: 'scheduled block',
-          due_date: null,
-          scheduled_date: '2025-06-15',
-          page_id: null,
-        }),
-        makeBlock({ id: 'B3', content: 'property block', due_date: null, scheduled_date: null }),
-      ],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
-
-    render(<DuePanel date="2025-06-15" />)
-
-    // All 3 blocks visible initially
-    await screen.findByText('due block')
-    expect(screen.getByText('scheduled block')).toBeInTheDocument()
-    expect(screen.getByText('property block')).toBeInTheDocument()
-
-    // Click "Properties" filter
-    const propsBtn = screen.getByRole('radio', { name: /^Properties/ })
-    await user.click(propsBtn)
-
-    // Only property-sourced block remains
-    await waitFor(() => {
-      expect(screen.queryByText('due block')).not.toBeInTheDocument()
-      expect(screen.queryByText('scheduled block')).not.toBeInTheDocument()
-      expect(screen.getByText('property block')).toBeInTheDocument()
-    })
-  })
-
-  // A chosen segment fetched its own source's rows alone, so the header names
-  // that segment even for a row the date heuristic would call Due.
-  it('under Scheduled, a row both due and scheduled today counts as Scheduled', async () => {
-    const user = userEvent.setup()
-    mockedListBlocks.mockResolvedValue({
-      items: [
-        makeBlock({
-          id: 'B1',
-          content: 'both dates',
-          due_date: '2025-06-15',
-          scheduled_date: '2025-06-15',
-        }),
-      ],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
-    render(<DuePanel date="2025-06-15" />)
-    await screen.findByText('both dates')
-
-    await user.click(screen.getByRole('radio', { name: /^Scheduled/ }))
-
-    expect(await screen.findByRole('button', { name: 'Scheduled 1' })).toBeInTheDocument()
-    expect(screen.getByRole('radio', { name: 'Scheduled (1)' })).toBeInTheDocument()
-  })
-
-  // 18. Header shows per-source breakdown when multiple sources exist
-  it('header shows per-source breakdown when multiple sources exist', async () => {
-    mockedListBlocks.mockResolvedValue({
-      items: [
-        makeBlock({ id: 'B1', content: 'due1', due_date: '2025-06-15', scheduled_date: null }),
-        makeBlock({ id: 'B2', content: 'due2', due_date: '2025-06-15', scheduled_date: null }),
-        makeBlock({
-          id: 'B3',
-          content: 'sched1',
-          due_date: null,
-          scheduled_date: '2025-06-15',
-          page_id: null,
-        }),
-        makeBlock({ id: 'B4', content: 'prop1', due_date: null, scheduled_date: null }),
-      ],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
-
-    render(<DuePanel date="2025-06-15" />)
-
-    // Wait for blocks to load
-    await screen.findByText('due1')
-
-    // Header should show breakdown with middle dot separator
-    expect(
-      screen.getByRole('button', { name: 'Due 2 \u00B7 Scheduled 1 \u00B7 Properties 1' }),
-    ).toBeInTheDocument()
-  })
-
-  // #1540 — the breakdown is a date-equality heuristic, not a per-source
-  // tally. A block whose due_date AND scheduled_date both equal the panel date
-  // must be counted exactly once (bucketed as "due" by priority order), never
-  // double-counted, and the three buckets must sum to the visible block count.
-  it('counts a both-dates-equal block once, as Due (#1540 heuristic)', async () => {
-    mockedListBlocks.mockResolvedValue({
-      items: [
-        // due_date === scheduled_date === panel date: priority order -> Due.
-        makeBlock({
-          id: 'B1',
-          content: 'both1',
-          due_date: '2025-06-15',
-          scheduled_date: '2025-06-15',
-        }),
-        makeBlock({
-          id: 'B2',
-          content: 'sched1',
-          due_date: null,
-          scheduled_date: '2025-06-15',
-          page_id: null,
-        }),
-      ],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
-
-    render(<DuePanel date="2025-06-15" />)
-
-    await screen.findByText('both1')
-
-    // Both-dates block buckets as Due (not double-counted), summing to 2 total.
-    expect(screen.getByRole('button', { name: 'Due 1 · Scheduled 1' })).toBeInTheDocument()
-  })
-
-  // 19. One source type: the header names that one
-  it('header shows only the one source type there is', async () => {
-    mockedListBlocks.mockResolvedValue({
-      items: [
-        makeBlock({ id: 'B1', content: 'due1', due_date: '2025-06-15', scheduled_date: null }),
-        makeBlock({ id: 'B2', content: 'due2', due_date: '2025-06-15', scheduled_date: null }),
-      ],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
-
-    render(<DuePanel date="2025-06-15" />)
-
-    // All blocks are from due_date
-    expect(await screen.findByRole('button', { name: 'Due 2' })).toBeInTheDocument()
   })
 
   // 20. Panel returns null when all sources are empty (supersedes B-43)
@@ -1485,11 +1116,8 @@ describe('DuePanel', () => {
       expect(screen.getByTestId('projected-entry')).toHaveFocus()
     })
 
-    // #5302 — a long list mounts only a window of its grouped rows, so the Nth
-    // mounted row is not item N: End found nothing to scroll and left the
-    // projected entry it focused below the fold.
-    it('End scrolls the projected entry into view when only some rows are mounted', async () => {
-      virtualWindow.size = 5
+    // #5302 — End focuses the projected entry after a long list and scrolls it into view.
+    it('End scrolls the projected entry into view after a long list', async () => {
       mockedListBlocks.mockResolvedValue({
         items: Array.from({ length: 30 }, (_, i) =>
           makeBlock({ id: `R${i}`, content: `Real task ${i}`, todo_state: 'TODO', page_id: 'P1' }),
@@ -1522,8 +1150,7 @@ describe('DuePanel', () => {
         const user = userEvent.setup()
         render(<DuePanel date="2026-04-13" />)
         await screen.findByText(/Projected end target/)
-        const realRows = await screen.findAllByTestId('due-panel-item')
-        expect(realRows).toHaveLength(4)
+        const realRows = await findRows(30)
         realRows[0]?.focus()
 
         await user.keyboard('{End}')
@@ -1749,257 +1376,317 @@ describe('DuePanel', () => {
     })
   })
 
-  // --- Overdue blocks (#641) ---
-  describe('overdue blocks', () => {
-    it('shows overdue section when viewing today with overdue blocks', async () => {
-      const today = new Date()
-      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  // --- Today's tabs (#7155 R7) ---
+  describe("today's tabs", () => {
+    const TODAY = '2026-11-25' // a Wednesday: Friday is this week, next Thursday is later
 
-      mockedListBlocks.mockResolvedValue(emptyResponse)
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date(`${TODAY}T12:00:00`))
       mockedQueryByProperty.mockResolvedValue({
         items: [
           makeBlock({
-            id: 'OVERDUE1',
-            content: 'Overdue task',
-            parent_id: 'P1',
-            page_id: 'P1',
+            id: 'LATE',
+            content: 'Late task',
             todo_state: 'TODO',
-            priority: '1',
-            due_date: '2025-01-01',
+            due_date: '2026-11-22',
+          }),
+          makeBlock({
+            id: 'NOW',
+            content: 'Task for today',
+            todo_state: 'DOING',
+            scheduled_date: TODAY,
+          }),
+          makeBlock({
+            id: 'FRI',
+            content: 'Friday task',
+            todo_state: 'TODO',
+            due_date: '2026-11-27',
+          }),
+          makeBlock({
+            id: 'NEXT',
+            content: 'Next week task',
+            todo_state: 'TODO',
+            scheduled_date: '2026-12-03',
+          }),
+          makeBlock({ id: 'UNDATED', content: 'Someday task', todo_state: 'TODO' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+      // The day's own rows: a block dated today by a property, and a task the
+      // open tasks hold too.
+      mockedListBlocks.mockResolvedValue({
+        items: [
+          makeBlock({ id: 'PROP', content: 'Property-dated note', todo_state: null }),
+          makeBlock({
+            id: 'NOW',
+            content: 'Task for today',
+            todo_state: 'DOING',
+            scheduled_date: TODAY,
           }),
         ],
         next_cursor: null,
         has_more: false,
         total_count: null,
       })
-
-      render(<DuePanel date={todayStr} />)
-
-      expect(await screen.findByText(t('duePanel.overdueTitle'))).toBeInTheDocument()
-      expect(screen.getByText(/Overdue task/)).toBeInTheDocument()
     })
 
-    it('shows open tasks scheduled before today, with how long ago, under Scheduled earlier (#7040)', async () => {
-      const day = (offset: number) => {
-        const d = new Date()
-        d.setDate(d.getDate() + offset)
-        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-      }
-      mockedListUnfinishedTasks.mockResolvedValue({
-        items: [
-          makeBlock({
-            id: 'SCHED1',
-            content: 'Plan the offsite',
-            parent_id: 'P1',
-            page_id: 'P1',
-            todo_state: 'TODO',
-            scheduled_date: day(-2),
-          }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+    afterEach(() => {
+      vi.useRealTimers()
+    })
 
-      const { container } = render(<DuePanel date={day(0)} />)
+    it('counts each tab and shows every bucket under its heading on All', async () => {
+      const { container } = render(<DuePanel date={TODAY} />)
 
-      expect(await screen.findByText(t('duePanel.scheduledEarlierTitle'))).toBeInTheDocument()
-      expect(screen.getByText(/Plan the offsite/)).toBeInTheDocument()
-      expect(
-        screen.getByText(`(${t('duePanel.scheduledDaysAgo', { count: 2 })})`),
-      ).toBeInTheDocument()
+      await findRows(6)
+      const tabs = screen.getAllByRole('tab').map((tab) => tab.textContent)
+      expect(tabs).toEqual(['All 6', 'Overdue 1', 'Today 2', 'This week 1', 'Later 1', 'No date 1'])
+      expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual([
+        'Overdue',
+        'Today',
+        'This week',
+        'Later',
+        'No date',
+      ])
+      expect(screen.getByText(`(${t('duePanel.daysOverdue', { count: 3 })})`)).toBeInTheDocument()
       expect(await axe(container)).toHaveNoViolations()
     })
 
-    it('does not show overdue section for non-today dates', async () => {
-      mockedListBlocks.mockResolvedValue(emptyResponse)
+    it('a tab lists its own tasks alone, with no heading', async () => {
+      const user = userEvent.setup()
+      render(<DuePanel date={TODAY} />)
+      await findRows(6)
 
-      render(<DuePanel date="2025-06-15" />)
+      await user.click(screen.getByRole('tab', { name: /^No date/ }))
 
-      await waitFor(() => {
-        expect(screen.queryByText(t('duePanel.overdueTitle'))).not.toBeInTheDocument()
-      })
+      const rows = await findRows(1)
+      expect(rows[0]).toHaveTextContent('Someday task')
+      expect(screen.queryByRole('heading', { level: 2 })).not.toBeInTheDocument()
+
+      await user.click(screen.getByRole('tab', { name: /^Today/ }))
+
+      const todayRows = await findRows(2)
+      expect(todayRows[0]).toHaveTextContent('Task for today')
+      expect(todayRows[1]).toHaveTextContent('Property-dated note')
     })
 
-    it('does not show DONE blocks in overdue section', async () => {
-      const today = new Date()
-      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    it('on a later page, counts the tabs from that page’s date', async () => {
+      render(<DuePanel date="2026-11-26" />)
 
+      await findRows(6)
+      // From Thursday the 26th: the 25th's task is overdue, Friday's is this
+      // week; the day's own property-dated row is the 26th's.
+      expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+        'All 6',
+        'Overdue 2',
+        'Today 1',
+        'This week 1',
+        'Later 1',
+        'No date 1',
+      ])
+      // A row's age still counts from the real today (the 25th), not the page's date.
+      expect(screen.getByText(`(${t('duePanel.daysOverdue', { count: 3 })})`)).toBeInTheDocument()
+    })
+
+    it('on a later page, lists a projected occurrence of an open task under Today', async () => {
+      // LATE repeats: its next occurrence falls on the 26th, while the task
+      // itself stays in the open tasks (Overdue from the 26th).
+      const late = makeBlock({
+        id: 'LATE',
+        content: 'Late task',
+        todo_state: 'TODO',
+        due_date: '2026-11-22',
+      })
+      mockedListProjectedAgenda.mockResolvedValue({
+        items: [{ block: late, projected_date: '2026-11-26', source: 'due_date' }],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+      const user = userEvent.setup()
+      render(<DuePanel date="2026-11-26" />)
+
+      const entry = await screen.findByTestId('projected-entry')
+      expect(entry).toHaveTextContent('Late task')
+      expect(screen.getByRole('tab', { name: /^Today/ })).toHaveTextContent('Today 2')
+
+      await user.click(screen.getByRole('tab', { name: /^Today/ }))
+      expect(await screen.findByTestId('projected-entry')).toHaveTextContent('Late task')
+    })
+
+    it('ends This week where the week-start setting ends the week', async () => {
+      const sunday = makeBlock({
+        id: 'SUN',
+        content: 'Sunday task',
+        todo_state: 'TODO',
+        due_date: '2026-11-29',
+      })
+      mockedQueryByProperty.mockResolvedValue({
+        items: [sunday],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
       mockedListBlocks.mockResolvedValue(emptyResponse)
+      const tabNames = () => screen.getAllByRole('tab').map((tab) => tab.textContent)
+
+      // Monday-start weeks (the default) end on Sunday the 29th.
+      const { unmount } = render(<DuePanel date={TODAY} />)
+      await findRows(1)
+      expect(tabNames()).toContain('This week 1')
+      unmount()
+
+      // Sunday-start weeks end on Saturday the 28th, so the 29th is later.
+      localStorage.setItem('week-start-preference', '0')
+      try {
+        render(<DuePanel date={TODAY} />)
+        await findRows(1)
+        expect(tabNames()).toContain('Later 1')
+      } finally {
+        localStorage.removeItem('week-start-preference')
+      }
+    })
+
+    it('Group: Page keeps the keyboard cursor and Enter on the same row', async () => {
       mockedQueryByProperty.mockResolvedValue({
         items: [
           makeBlock({
-            id: 'DONE1',
-            content: 'Done task',
-            parent_id: null,
-            todo_state: 'DONE',
-            priority: null,
-            due_date: '2025-01-01',
-          }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
-
-      render(<DuePanel date={todayStr} />)
-
-      await waitFor(() => {
-        expect(screen.queryByText(t('duePanel.overdueTitle'))).not.toBeInTheDocument()
-      })
-    })
-  })
-
-  // --- Hide-before-scheduled toggle (#641) ---
-  describe('hide-before-scheduled toggle (#641)', () => {
-    afterEach(() => {
-      localStorage.removeItem('agaric:hideBeforeScheduled')
-    })
-
-    it('shows all blocks by default (toggle OFF)', async () => {
-      const futureDate = '2099-12-31'
-      mockedListBlocks.mockResolvedValue({
-        items: [
-          makeBlock({
-            id: 'FUTURE1',
-            content: 'Future scheduled',
-            parent_id: null,
+            id: 'B1',
+            content: 'Beta first',
+            page_id: 'P_B',
+            due_date: '2026-11-20',
             todo_state: 'TODO',
-            due_date: '2026-04-03',
-            scheduled_date: futureDate,
-            page_id: null,
           }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
-
-      render(<DuePanel date="2026-04-03" />)
-      expect(await screen.findByText(/Future scheduled/)).toBeInTheDocument()
-    })
-
-    it('hides future-scheduled blocks when toggle is ON', async () => {
-      localStorage.setItem('agaric:hideBeforeScheduled', 'true')
-      const futureDate = '2099-12-31'
-      mockedListBlocks.mockResolvedValue({
-        items: [
           makeBlock({
-            id: 'FUTURE2',
-            content: 'Hidden task',
-            parent_id: null,
+            id: 'A1',
+            content: 'Alpha first',
+            page_id: 'P_A',
+            due_date: '2026-11-21',
             todo_state: 'TODO',
-            due_date: '2026-04-03',
-            scheduled_date: futureDate,
-            page_id: null,
           }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
-
-      render(<DuePanel date="2026-04-03" />)
-
-      // Block should be hidden
-      await waitFor(() => {
-        expect(screen.queryByText(/Hidden task/)).not.toBeInTheDocument()
-      })
-    })
-
-    it('keeps a same-day scheduled block visible for a future subject day when toggle is ON', async () => {
-      localStorage.setItem('agaric:hideBeforeScheduled', 'true')
-      const subjectDate = '2099-12-31'
-      mockedListBlocks.mockResolvedValue({
-        items: [
           makeBlock({
-            id: 'SAME_DAY',
-            content: 'Same-day scheduled task',
-            parent_id: null,
+            id: 'B2',
+            content: 'Beta second',
+            page_id: 'P_B',
+            due_date: '2026-11-22',
             todo_state: 'TODO',
-            due_date: subjectDate,
-            scheduled_date: subjectDate,
-            page_id: null,
           }),
         ],
         next_cursor: null,
         has_more: false,
         total_count: null,
       })
-
-      render(<DuePanel date={subjectDate} />)
-
-      expect(await screen.findByText('Same-day scheduled task')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Due 1' })).toBeInTheDocument()
-    })
-
-    it('the hide-future-scheduled switch starts off', async () => {
-      mockedListBlocks.mockResolvedValue({
-        items: [makeBlock({ id: 'B1', content: 'label test block' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
-
-      render(<DuePanel date="2026-04-03" />)
-
-      const toggle = await screen.findByRole('switch', { name: 'Hide future scheduled' })
-      expect(toggle).toHaveAttribute('aria-checked', 'false')
-    })
-  })
-
-  // --- Deadline warning period (#641) ---
-  describe('deadline warning period (#641)', () => {
-    afterEach(() => {
-      localStorage.removeItem('agaric:deadlineWarningDays')
-    })
-
-    it('shows upcoming section when warning days > 0 and tasks approach deadline', async () => {
-      localStorage.setItem('agaric:deadlineWarningDays', '7')
-      const tomorrow = new Date()
-      tomorrow.setDate(tomorrow.getDate() + 1)
-      const tomorrowStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`
-      const today = new Date()
-      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-
       mockedListBlocks.mockResolvedValue(emptyResponse)
+      mockedBatchResolve.mockResolvedValue([
+        { id: 'P_A', title: 'Alpha page', block_type: 'page', deleted: false },
+        { id: 'P_B', title: 'Beta page', block_type: 'page', deleted: false },
+      ])
+      const onNavigateToPage = vi.fn()
+      const user = userEvent.setup()
+      render(<DuePanel date={TODAY} onNavigateToPage={onNavigateToPage} />)
+      await findRows(3)
+      await user.click(screen.getByTestId('due-panel-group'))
+      await user.click(await screen.findByRole('button', { name: t('agenda.groupPage') }))
+      await waitFor(() => {
+        expect(screen.getAllByTestId('due-panel-page-group')).toHaveLength(2)
+      })
+
+      // The second row on screen is Beta second, under Beta page.
+      const list = document.querySelector('.due-panel-content') as HTMLElement
+      fireEvent.keyDown(list, { key: 'ArrowDown' })
+      fireEvent.keyDown(list, { key: 'Enter' })
+
+      expect(onNavigateToPage).toHaveBeenCalledWith('P_B', 'Beta page', 'B2')
+      localStorage.removeItem('agaric:duePanel:groupBy')
+    })
+
+    it('Group: Page puts each page’s tasks under its heading, and the choice is kept', async () => {
       mockedQueryByProperty.mockResolvedValue({
         items: [
-          {
-            id: 'UPCOMING1',
-            block_type: 'content',
-            content: 'Due soon task',
-            parent_id: null,
-            position: 1,
-            deleted_at: null,
+          makeBlock({
+            id: 'B1',
+            content: 'Beta first',
+            page_id: 'P_B',
+            due_date: '2026-11-20',
             todo_state: 'TODO',
-            priority: null,
-            due_date: tomorrowStr,
-            scheduled_date: null,
-            page_id: null,
-          },
+          }),
+          makeBlock({
+            id: 'A1',
+            content: 'Alpha first',
+            page_id: 'P_A',
+            due_date: '2026-11-21',
+            todo_state: 'TODO',
+          }),
+          makeBlock({
+            id: 'B2',
+            content: 'Beta second',
+            page_id: 'P_B',
+            due_date: '2026-11-22',
+            todo_state: 'TODO',
+          }),
         ],
         next_cursor: null,
         has_more: false,
         total_count: null,
       })
+      mockedListBlocks.mockResolvedValue(emptyResponse)
+      mockedBatchResolve.mockResolvedValue([
+        { id: 'P_A', title: 'Alpha page', block_type: 'page', deleted: false },
+        { id: 'P_B', title: 'Beta page', block_type: 'page', deleted: false },
+      ])
+      const user = userEvent.setup()
+      const { unmount } = render(<DuePanel date={TODAY} />)
+      await findRows(3)
 
-      render(<DuePanel date={todayStr} />)
-      expect(await screen.findByText(t('duePanel.upcomingTitle'))).toBeInTheDocument()
-      expect(screen.getByText(/Due soon task/)).toBeInTheDocument()
+      await user.click(screen.getByTestId('due-panel-group'))
+      await user.click(await screen.findByRole('button', { name: t('agenda.groupPage') }))
+
+      await waitFor(() => {
+        expect(screen.getAllByTestId('due-panel-page-group')).toHaveLength(2)
+      })
+      // Each page's heading row, then its rows, in order.
+      const rows = [
+        ...document.querySelectorAll(
+          '[data-testid="due-panel-page-group"], [data-testid="due-panel-item"]',
+        ),
+      ].map((row) =>
+        row.matches('[data-testid="due-panel-page-group"]')
+          ? `# ${row.textContent}`
+          : (row.textContent?.match(/\w+ (first|second)/)?.[0] ?? ''),
+      )
+      expect(rows).toEqual([
+        '# Beta page',
+        'Beta first',
+        'Beta second',
+        '# Alpha page',
+        'Alpha first',
+      ])
+
+      unmount()
+      render(<DuePanel date={TODAY} />)
+      await waitFor(() => {
+        expect(screen.getAllByTestId('due-panel-page-group')).toHaveLength(2)
+      })
+      localStorage.removeItem('agaric:duePanel:groupBy')
     })
 
-    it('does not show upcoming section when warning days is 0', async () => {
-      localStorage.setItem('agaric:deadlineWarningDays', '0')
-      const today = new Date()
-      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-
-      mockedListBlocks.mockResolvedValue(emptyResponse)
-
-      render(<DuePanel date={todayStr} />)
-      await waitFor(() => {
-        expect(screen.queryByText(t('duePanel.upcomingTitle'))).not.toBeInTheDocument()
+    it('a tab with no tasks says so', async () => {
+      mockedQueryByProperty.mockResolvedValue({
+        items: [makeBlock({ id: 'UNDATED', content: 'Someday task', todo_state: 'TODO' })],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
       })
+      const user = userEvent.setup()
+      render(<DuePanel date={TODAY} />)
+      await screen.findByText('Someday task')
+
+      await user.click(screen.getByRole('tab', { name: /^Later/ }))
+
+      expect(await screen.findByText(t('duePanel.emptyTab'))).toBeInTheDocument()
+      expect(screen.queryByTestId('due-panel-item')).not.toBeInTheDocument()
     })
   })
 
@@ -2136,12 +1823,12 @@ describe('DuePanel', () => {
       })
     })
 
-    it('queryByProperty rejection for overdue fetch returns null when all empty', async () => {
+    it('queryByProperty rejection for the open tasks returns null when all empty', async () => {
       const today = new Date()
       const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
 
       mockedListBlocks.mockResolvedValueOnce(emptyResponse)
-      mockedQueryByProperty.mockRejectedValueOnce(new Error('overdue query failed'))
+      mockedQueryByProperty.mockRejectedValueOnce(new Error('open tasks query failed'))
 
       const { container } = render(<DuePanel date={todayStr} />)
 
@@ -2150,45 +1837,10 @@ describe('DuePanel', () => {
         expect(mockedListBlocks).toHaveBeenCalled()
       })
 
-      // Overdue section should not appear
-      await waitFor(() => {
-        expect(screen.queryByText(t('duePanel.overdueTitle'))).not.toBeInTheDocument()
-      })
-
       // Panel returns null when all sources are empty
       await waitFor(() => {
         expect(container.innerHTML).toBe('')
       })
-    })
-
-    it('queryByProperty rejection for upcoming fetch returns null when all empty', async () => {
-      localStorage.setItem('agaric:deadlineWarningDays', '7')
-      const today = new Date()
-      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-
-      mockedListBlocks.mockResolvedValueOnce(emptyResponse)
-      // queryByProperty is called twice when isToday && warningDays > 0: once for overdue, once for upcoming.
-      // Let overdue succeed, upcoming fail.
-      mockedQueryByProperty
-        .mockResolvedValueOnce(emptyResponse)
-        .mockRejectedValueOnce(new Error('upcoming query failed'))
-
-      const { container } = render(<DuePanel date={todayStr} />)
-
-      // Wait for loading to finish
-      await waitFor(() => {
-        expect(mockedQueryByProperty).toHaveBeenCalledTimes(2)
-      })
-
-      // Upcoming section should not appear
-      expect(screen.queryByText(t('duePanel.upcomingTitle'))).not.toBeInTheDocument()
-
-      // Panel returns null when all sources are empty
-      await waitFor(() => {
-        expect(container.innerHTML).toBe('')
-      })
-
-      localStorage.removeItem('agaric:deadlineWarningDays')
     })
 
     it('listBlocks rejection on loadMore preserves existing blocks', async () => {

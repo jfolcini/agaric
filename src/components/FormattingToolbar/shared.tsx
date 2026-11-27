@@ -53,7 +53,7 @@ function RowShortcut({ label }: { label: string }): React.ReactElement | null {
   const keyboardHints = useKeyboardHints()
   const { shortcut } = toolbarShortcut(label)
   if (shortcut === undefined || !keyboardHints) return null
-  return <Kbd keys={shortcut} className="ml-auto" aria-hidden="true" />
+  return <Kbd keys={shortcut} tone="muted" className="ml-auto" aria-hidden="true" />
 }
 
 /**

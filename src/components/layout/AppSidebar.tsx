@@ -2,10 +2,10 @@
  * AppSidebar — sidebar shell extracted from App.tsx.
  *
  * #5269 — a header (branding + collapse toggle, space switcher, New page),
- * the daily surfaces (`SIDEBAR_NAV_ITEMS`), a lower group of Graph, Templates
- * and Trash (`SIDEBAR_LOWER_NAV_ITEMS`, #7040 D2) above Bookmarks, and a footer
- * with the Sync and Settings rows (#7040 P11). The other views open from the Pages
- * header or Settings. `CollapseButton` is a
+ * the daily surfaces (`SIDEBAR_NAV_ITEMS`) above Bookmarks, Graph and Trash
+ * (`SIDEBAR_LOWER_NAV_ITEMS`, #7155 R21) at the foot of the list, and a footer
+ * with the Sync and Settings rows (#7040 P11). The other views open from the Pages header or
+ * Settings. `CollapseButton` is a
  * sidebar-internal helper and lives alongside the JSX it supports;
  * `syncDotClass` colours the dot on the phone header's drawer button (App.tsx).
  *
@@ -358,16 +358,17 @@ function AppSidebarInner({
               <SidebarMenu>{SIDEBAR_NAV_ITEMS.flatMap(renderNavItem)}</SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
-          {/* #7040 D2 — the views a day needs less often. Above Bookmarks, so
-              their place does not move with the bookmark count. */}
-          <SidebarGroup>
+          {/* #4713 — the bookmarked pages, as a collapsible section. Below
+              the fixed nav because its length varies with the bookmarks. */}
+          <BookmarksSection />
+          {/* #7155 R21 — the views a day needs less often, at the foot of the list above Sync and
+              Settings. In the scrolling list, not the footer, so a short drawer still shows the
+              daily rows. */}
+          <SidebarGroup className="mt-auto">
             <SidebarGroupContent>
               <SidebarMenu>{SIDEBAR_LOWER_NAV_ITEMS.map(renderLowerNavItem)}</SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
-          {/* #4713 — the bookmarked pages, as a collapsible section. Below
-              the fixed nav because its length varies with the bookmarks. */}
-          <BookmarksSection />
         </FeatureErrorBoundary>
       </SidebarContent>
       <SidebarFooter>

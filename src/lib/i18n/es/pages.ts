@@ -5,6 +5,7 @@
  */
 
 export const pages: Record<string, string> = {
+  'journal.dayProperties': 'Propiedades…',
   'journal.today': 'Hoy',
   'journal.dayTab': 'Día',
   'journal.weekTab': 'Semana',
@@ -90,7 +91,7 @@ export const pages: Record<string, string> = {
   'pageHeader.removeJournalTemplate': 'Quitar la plantilla del diario',
   'pageHeader.menuAddAlias': 'Añadir alias',
   'pageHeader.menuAddTag': 'Añadir etiqueta',
-  'pageHeader.menuAddProperty': 'Añadir propiedad',
+  'pageHeader.menuProperties': 'Propiedades…',
   'pageHeader.sectionAdd': 'Añadir',
   'pageHeader.sectionView': 'Ver',
   'pageHeader.sectionTemplate': 'Plantilla',
@@ -420,8 +421,8 @@ export const pages: Record<string, string> = {
   'pageProperty.saveFailed': 'No se ha podido guardar la propiedad',
   'pageProperty.deleteFailed': 'No se ha podido eliminar la propiedad',
   'pageProperty.addFailed': 'No se ha podido añadir la propiedad',
-  'pageProperty.toggleLabel': 'Mostrar u ocultar las propiedades',
   'pageProperty.propertiesButton': 'Propiedades',
+  'pageProperty.dialogDescription': 'Las propiedades de esta página.',
   'pageProperty.addPropertyLabel': 'Añadir propiedad',
   'pageProperty.addPropertyButton': 'Añadir propiedad',
   'pageProperty.addPropertyDisabledInfo': 'Por qué aún no se pueden añadir propiedades',

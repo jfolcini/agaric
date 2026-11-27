@@ -1,7 +1,7 @@
 import { activeAlertDialog, expect, navigateToView, test, waitForBoot } from './helpers'
 
 /**
- * #5358 — the day header's Delete page soft-deleted today's page and its
+ * #5358 — the day's Page actions → Delete page soft-deleted today's page and its
  * blocks, but the day kept rendering them until a reload. Today is the seed's
  * daily page, which holds "Buy groceries".
  */
@@ -13,7 +13,8 @@ test('Delete page empties today at once, and the blocks stay gone @journal @page
   const deleted = page.locator('[data-testid="block-static"]', { hasText: 'Buy groceries' })
   await expect(deleted).toBeVisible()
 
-  await page.getByRole('button', { name: 'Delete page', exact: true }).click()
+  await page.getByRole('button', { name: 'Page actions', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Delete page', exact: true }).click()
   await activeAlertDialog(page).getByRole('button', { name: 'Delete page', exact: true }).click()
 
   // No reload and no navigation: the empty state replaces the deleted blocks.

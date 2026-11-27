@@ -10,6 +10,7 @@ import {
   ipc,
   navigateToView,
   openPage,
+  openPageProperties,
   openSettingsTab,
   test,
   waitForBoot,
@@ -180,7 +181,7 @@ test('an open ref property shows its target’s title once it resolves (#6427) @
     value: { value_ref: target },
   })
   await openPage(page, 'Mentor holder')
-  await page.locator('.page-property-table-header').click()
+  await openPageProperties(page)
   const value = page.getByRole('button', { name: 'mentor value', exact: true })
   await expect(value).toHaveText('Mentor target')
 })

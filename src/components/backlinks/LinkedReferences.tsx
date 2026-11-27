@@ -382,7 +382,9 @@ export function LinkedReferences({
           segment just checked — dropping keyboard focus to <body>, and leaving
           no way back to "All" from an empty result. */}
       {expanded && (
-        <div className="mt-1 px-2">
+        // Spaced as the row below is: on a phone the segments span the row, so
+        // their targets reach under the header's source-page filter.
+        <div className="mt-1 px-2 coarse:mt-2">
           <KindToggle kind={kind} onKindChange={setKind} />
         </div>
       )}

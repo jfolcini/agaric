@@ -119,9 +119,10 @@ describe('AppSidebar', () => {
 
   // #5269 — the sidebar is cut down to the daily surfaces. Pin the whole row
   // list, in order, so a row that creeps back (or goes missing) reddens this.
-  // #6532 — Agenda, the journal's agenda mode, follows Journal. #7040 D2 —
-  // Graph, Templates and Trash follow in the lower group.
-  it('renders exactly New Page, the four daily views, Agenda and the lower group as rows, Sync and Settings as labelled footer rows (#5269, #7040 P11)', () => {
+  // #6532 — Agenda, the journal's agenda mode, follows Journal. #7155 R21 —
+  // Graph and Trash end the list, above Sync and Settings; Templates is not
+  // in the sidebar.
+  it('renders exactly New Page, the four daily views, Agenda, Graph and Trash as rows, Sync and Settings as labelled footer rows (#5269, #7040 P11, #7155 R21)', () => {
     renderSidebar()
 
     const rows = [...document.querySelectorAll('[data-sidebar="menu-button"]')]
@@ -135,7 +136,6 @@ describe('AppSidebar', () => {
       t('sidebar.search'),
       t('sidebar.tags'),
       t('sidebar.graph'),
-      t('sidebar.templates'),
       t('sidebar.trash'),
     ])
     expect(SIDEBAR_NAV_ITEMS.map((item) => item.id)).toEqual(['journal', 'pages', 'search', 'tags'])
@@ -216,20 +216,16 @@ describe('AppSidebar', () => {
     expect(sidebar).toHaveAttribute('data-state', 'expanded')
   })
 
-  describe('the lower group (#7040 D2)', () => {
+  describe('the lower group (#7155 R21)', () => {
     const LOWER_VIEWS = [
       ['sidebar.graph', 'graph'],
-      ['sidebar.templates', 'templates'],
       ['sidebar.trash', 'trash'],
     ] as const
 
-    /** The menu buttons of the sidebar group after the main nav, in order. */
-    function lowerGroupRows(): string[] {
-      const groups = document.querySelectorAll('[data-sidebar="group"]')
-      const lower = groups[1] as HTMLElement
-      return [...lower.querySelectorAll('[data-sidebar="menu-button"]')].map(
-        (row) => row.textContent ?? '',
-      )
+    /** The last sidebar group of the list, the one below Bookmarks. */
+    function lowerGroup(): HTMLElement {
+      const groups = document.querySelectorAll('[data-sidebar="content"] [data-sidebar="group"]')
+      return [...groups].at(-1) as HTMLElement
     }
 
     function mockTrashCount(count: () => number) {
@@ -241,13 +237,16 @@ describe('AppSidebar', () => {
       })
     }
 
-    it('holds Graph, Templates and Trash in a group of their own, after the main nav', () => {
+    it('holds Graph and Trash in a group of their own, below Bookmarks', () => {
       renderSidebar()
-      expect(lowerGroupRows()).toEqual([
-        t('sidebar.graph'),
-        t('sidebar.templates'),
-        t('sidebar.trash'),
-      ])
+      const lower = lowerGroup()
+      expect(
+        [...lower.querySelectorAll('[data-sidebar="menu-button"]')].map((row) => row.textContent),
+      ).toEqual([t('sidebar.graph'), t('sidebar.trash')])
+      const bookmarks = screen.getByTestId('sidebar-bookmarks-toggle')
+      expect(
+        bookmarks.compareDocumentPosition(lower) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy()
     })
 
     it.each(LOWER_VIEWS)('%s opens the %s view and marks it current', async (labelKey, view) => {

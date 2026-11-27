@@ -3,10 +3,12 @@ import type { Page } from '@playwright/test'
 import {
   activeDialog,
   activePopover,
+  closePageProperties,
   expect,
   ipc,
   navigateToView,
   openPage,
+  openPageProperties,
   openPropertySheet,
   openSettingsTab,
   test,
@@ -62,7 +64,7 @@ function block(page: Page, id: string) {
   return page.locator(`[data-testid="sortable-block"][data-block-id="${id}"]`)
 }
 
-/** Meetings open with its Properties table expanded; beta is marked on its chip and in the table. */
+/** On Meetings, beta is marked on its block's chip and in the page's Properties table. */
 async function expectMarked(page: Page): Promise<void> {
   await openPage(page, 'Meetings')
   await expect(
@@ -75,12 +77,13 @@ async function expectMarked(page: Page): Promise<void> {
   await expect(block(page, MTG_1).getByRole('button', { name: /doesn't fit/ })).toHaveCount(0)
   await expect(page.getByRole('button', { name: MARK, exact: true })).toHaveCount(1)
 
-  await page.getByRole('button', { name: /^Properties/ }).click()
-  await expect(page.getByRole('combobox', { name: 'project value', exact: true })).toHaveText(
+  const properties = await openPageProperties(page)
+  await expect(properties.getByRole('combobox', { name: 'project value', exact: true })).toHaveText(
     'beta',
   )
   // The table's row carries the second mark.
-  await expect(page.getByRole('button', { name: MARK, exact: true })).toHaveCount(2)
+  await expect(properties.getByRole('button', { name: MARK, exact: true })).toHaveCount(1)
+  await closePageProperties(page)
 }
 
 test.describe("Marks on values that don't fit a property @settings @pages @editor", () => {
@@ -107,13 +110,15 @@ test.describe("Marks on values that don't fit a property @settings @pages @edito
     const mark = block(page, MTG_2).getByRole('button', { name: MARK, exact: true })
     await expect(mark).toBeVisible()
 
-    await page.getByRole('button', { name: /^Properties/ }).click()
-    await page.getByRole('button', { name: 'Edit options for project', exact: true }).click()
+    const properties = await openPageProperties(page)
+    await properties.getByRole('button', { name: 'Edit options for project', exact: true }).click()
     const editor = activePopover(page)
     await editor.getByRole('textbox', { name: 'New option value', exact: true }).fill('beta')
     await editor.getByRole('button', { name: 'Add option', exact: true }).click()
     await editor.getByRole('button', { name: 'Save options', exact: true }).click()
     await expect(editor).toHaveCount(0)
+    // The dialog hides the page from the accessibility tree; close it before reading the block.
+    await closePageProperties(page)
 
     await expect(mark).toHaveCount(0)
   })

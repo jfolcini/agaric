@@ -290,7 +290,11 @@ test.describe('page mode on a touch phone (#5691) @editor @pages @mobile', () =>
 
     await row.getByRole('button', { name: 'Page actions', exact: true }).tap()
     const menu = page.getByRole('menu', { name: 'Page actions' })
-    await expect(menu.getByRole('menuitem')).toHaveText(['Edit as blocks', 'Delete page'])
+    await expect(menu.getByRole('menuitem')).toHaveText([
+      'Edit as blocks',
+      'Properties…',
+      'Delete page',
+    ])
     await menu.getByRole('menuitem', { name: 'Edit as blocks' }).tap()
     await expect(day).toHaveCount(0)
     await expect(

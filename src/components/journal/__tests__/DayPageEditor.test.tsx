@@ -2,7 +2,8 @@
  * DayPageEditor (#5691): the daily view's day page opens in page mode where a
  * page view would (the setting or the switch, within the cap), on touch too,
  * else in block mode with its Add block button; Ctrl+E switches it; and
- * a link into the day lands in either mode.
+ * a link into the day lands in either mode. Its title row works like a page's
+ * (#7155 R6): the date, the switch, the bookmark and the Page actions menu.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -51,11 +52,26 @@ vi.mock('@/editor/page-mode/PageModeSlot', async () => {
   }
 })
 
+// The page's properties surface (its dialog, or sheet on a phone) is tested on its own;
+// here it opens as a dialog that names the page it shows.
+vi.mock('@/components/pages/PagePropertyTable', () => ({
+  PagePropertyTable: (props: { pageId: string; open: boolean }) =>
+    props.open ? (
+      <dialog open aria-label="Properties">
+        <div data-testid="page-property-table" data-page-id={props.pageId} />
+      </dialog>
+    ) : null,
+}))
+
 import { makeBlock } from '@/__tests__/fixtures'
 import { axe } from '@/__tests__/helpers/axe'
 import type { TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
-import { DayPageEditor } from '@/components/journal/DayPageEditor'
+import { DayHeader, DayPageEditor } from '@/components/journal/DayPageEditor'
+import {
+  ViewHeaderOutletProvider,
+  ViewHeaderOutletSlot,
+} from '@/components/layout/ViewHeaderOutlet'
 import { PAGE_MODE_BLOCK_CAP } from '@/editor/page-mode/page-mode-fit'
 import { t } from '@/lib/i18n'
 import { PREFERENCES, removePreference, writePreference } from '@/lib/preferences'
@@ -65,6 +81,7 @@ import { getPageStore, PageBlockStoreProvider } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
 
 const DAY = 'PAGE_DAY'
+const DATE_TITLE = 'Wed, Nov 25, 2026'
 
 function stubInvoke(handlers: Readonly<TypedInvokeHandlers> = {}): void {
   vi.mocked(invoke).mockImplementation(mockInvokeCommands({ ...handlers }))
@@ -73,7 +90,7 @@ function stubInvoke(handlers: Readonly<TypedInvokeHandlers> = {}): void {
 function renderDay(onAddBlock = vi.fn()) {
   return render(
     <PageBlockStoreProvider pageId={DAY}>
-      <DayPageEditor pageId={DAY} onAddBlock={onAddBlock} />
+      <DayPageEditor pageId={DAY} displayDate={DATE_TITLE} onAddBlock={onAddBlock} />
     </PageBlockStoreProvider>,
   )
 }
@@ -165,6 +182,7 @@ describe('DayPageEditor', () => {
       <PageBlockStoreProvider pageId={DAY}>
         <DayPageEditor
           pageId={DAY}
+          displayDate={DATE_TITLE}
           actions={<button type="button">Open</button>}
           onAddBlock={vi.fn()}
         />
@@ -212,11 +230,114 @@ describe('DayPageEditor', () => {
       expect(screen.getByTestId('page-mode')).toHaveAttribute('data-page-id', DAY)
       expect(screen.queryByTestId('block-tree')).not.toBeInTheDocument()
       expect(radio(t('pageMode.page'))).toHaveAttribute('aria-checked', 'true')
-      expect(menuTrigger()).not.toBeInTheDocument()
     } finally {
       matchMedia.mockRestore()
       touchPoints.mockRestore()
     }
+  })
+
+  describe('its title row (#7155 R6)', () => {
+    it('holds the date, then the switch, the day’s actions and the Page actions menu', () => {
+      render(
+        <PageBlockStoreProvider pageId={DAY}>
+          <DayPageEditor
+            pageId={DAY}
+            displayDate={DATE_TITLE}
+            actions={<button type="button">Bookmark</button>}
+            onAddBlock={vi.fn()}
+          />
+        </PageBlockStoreProvider>,
+      )
+
+      const header = screen.getByRole('heading', { level: 1, name: DATE_TITLE }).closest('header')
+      expect(header).not.toBeNull()
+      const row = within(header as HTMLElement)
+      const order = [
+        row.getByRole('heading', { level: 1 }),
+        row.getByRole('radiogroup', { name: t('pageMode.switchLabel') }),
+        row.getByRole('button', { name: 'Bookmark' }),
+        row.getByRole('button', { name: t('pageHeader.pageActions') }),
+      ]
+      for (let i = 1; i < order.length; i++) {
+        expect(
+          (order[i - 1] as Node).compareDocumentPosition(order[i] as Node) &
+            Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy()
+      }
+    })
+
+    it('its menu holds Delete page, which asks for the delete', async () => {
+      const user = userEvent.setup()
+      const onDeleteRequest = vi.fn()
+      const { baseElement } = render(
+        <PageBlockStoreProvider pageId={DAY}>
+          <DayPageEditor
+            pageId={DAY}
+            displayDate={DATE_TITLE}
+            onAddBlock={vi.fn()}
+            onDeleteRequest={onDeleteRequest}
+          />
+        </PageBlockStoreProvider>,
+      )
+
+      await user.click(menuTrigger() as HTMLElement)
+      const menu = await screen.findByRole('menu', { name: t('pageHeader.pageActions') })
+      expect(await axe(baseElement)).toHaveNoViolations()
+      await user.click(within(menu).getByRole('menuitem', { name: t('pageHeader.deletePage') }))
+
+      expect(onDeleteRequest).toHaveBeenCalledTimes(1)
+      await waitFor(() => {
+        expect(screen.queryByRole('menu', { name: t('pageHeader.pageActions') })).toBeNull()
+      })
+    })
+
+    it('its menu’s Properties… opens the day page’s properties in a dialog', async () => {
+      const user = userEvent.setup()
+      renderDay()
+
+      await user.click(menuTrigger() as HTMLElement)
+      const menu = await screen.findByRole('menu', { name: t('pageHeader.pageActions') })
+      await user.click(within(menu).getByRole('menuitem', { name: t('journal.dayProperties') }))
+
+      const dialog = await screen.findByRole('dialog', {
+        name: t('pageProperty.propertiesButton'),
+      })
+      expect(within(dialog).getByTestId('page-property-table')).toHaveAttribute('data-page-id', DAY)
+    })
+  })
+
+  describe('DayHeader', () => {
+    const renderHeader = (insideScroller: boolean) =>
+      render(
+        <ViewHeaderOutletProvider>
+          <ViewHeaderOutletSlot insideScroller={insideScroller} />
+          <main>
+            <DayHeader displayDate={DATE_TITLE} actions={<button type="button">Act</button>} />
+          </main>
+        </ViewHeaderOutletProvider>,
+      )
+    const heading = () => screen.getByRole('heading', { name: DATE_TITLE })
+
+    it('on desktop heads the view from its header slot, with the actions', async () => {
+      const { container } = renderHeader(false)
+      await waitFor(() => {
+        expect(screen.getByTestId('view-header-outlet')).toContainElement(heading())
+      })
+      expect(screen.getByRole('button', { name: 'Act' })).toBeInTheDocument()
+      expect(await axe(container)).toHaveNoViolations()
+    })
+
+    it('on a phone stays with the day, the title alone', async () => {
+      const restore = asTouch(390)
+      try {
+        const { container } = renderHeader(true)
+        expect(screen.getByRole('main')).toContainElement(heading())
+        expect(screen.queryByRole('button', { name: 'Act' })).not.toBeInTheDocument()
+        expect(await axe(container)).toHaveNoViolations()
+      } finally {
+        restore()
+      }
+    })
   })
 
   describe('on a phone, the switch a row of the day’s Page actions menu', () => {
@@ -266,7 +387,12 @@ describe('DayPageEditor', () => {
       const onDeleteRequest = vi.fn()
       render(
         <PageBlockStoreProvider pageId={DAY}>
-          <DayPageEditor pageId={DAY} onAddBlock={vi.fn()} onDeleteRequest={onDeleteRequest} />
+          <DayPageEditor
+            pageId={DAY}
+            displayDate={DATE_TITLE}
+            onAddBlock={vi.fn()}
+            onDeleteRequest={onDeleteRequest}
+          />
         </PageBlockStoreProvider>,
       )
 
@@ -277,6 +403,18 @@ describe('DayPageEditor', () => {
         expect(screen.queryByRole('menu', { name: t('pageHeader.pageActions') })).toBeNull()
       })
       expect(onDeleteRequest).toHaveBeenCalledTimes(1)
+    })
+
+    it('its Properties… row opens the day page’s properties once the menu has closed', async () => {
+      const user = userEvent.setup()
+      renderDay()
+
+      const menu = await openMenu(user)
+      await user.click(within(menu).getByRole('menuitem', { name: t('journal.dayProperties') }))
+
+      const sheet = await screen.findByRole('dialog', { name: t('pageProperty.propertiesButton') })
+      expect(within(sheet).getByTestId('page-property-table')).toHaveAttribute('data-page-id', DAY)
+      expect(screen.queryByRole('menu', { name: t('pageHeader.pageActions') })).toBeNull()
     })
 
     it('has no Delete page row without a delete to ask for', async () => {

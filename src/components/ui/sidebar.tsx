@@ -430,8 +430,9 @@ const SidebarContent = ({
     )}
     // Radix wraps the content in a `display: table` div that grows to the
     // widest label, so a narrowed sidebar scrolled sideways instead of
-    // truncating. Forcing it to `block` pins the nav to the sidebar width.
-    viewportClassName="flex flex-col gap-2 [&>div]:!block"
+    // truncating. Forcing it to a full-height flex column pins the nav to the
+    // sidebar width and lets a group take `mt-auto` to sit at the bottom.
+    viewportClassName="[&>div]:!flex [&>div]:min-h-full [&>div]:flex-col [&>div]:gap-2"
     {...props}
   >
     {children}

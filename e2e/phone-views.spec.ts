@@ -192,4 +192,21 @@ test.describe('Phone views at 360 × 780 (#5932) @mobile @pages @journal @graph'
     )
     expect(surfaces, 'bordered surfaces').toEqual(['graph-view'])
   })
+
+  test("the local graph's depth picker fills its line's end, one button high", async ({ page }) => {
+    await waitForBoot(page)
+    await openPageMobile(page, 'Getting Started')
+    await navigateToView(page, 'Graph')
+    await page.getByRole('button', { name: 'Focus on this page' }).click()
+    const controlLocator = page.getByTestId('local-graph-control')
+    const control = await box(controlLocator)
+    const gap = parseFloat(await controlLocator.evaluate((el) => getComputedStyle(el).columnGap))
+    const label = await box(page.getByTestId('local-graph-seed-label'))
+    const hops = await box(page.getByTestId('local-graph-hops'))
+    expect(hops.x, "the row's gap after the label, no margin of its own").toBe(
+      label.x + label.width + gap,
+    )
+    expect(hops.x + hops.width, 'to the line end').toBe(control.x + control.width)
+    expect(hops.height, 'a Button high (36 px)').toBe(36)
+  })
 })

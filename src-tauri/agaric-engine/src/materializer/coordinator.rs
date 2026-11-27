@@ -11,7 +11,7 @@ use agaric_core::foreground::LifecycleHooks;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU32;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::sync::Notify;
@@ -86,7 +86,7 @@ pub(super) struct InboundRebuildDebounce {
     /// burst collapses to exactly one fan-out without observing cache state.
     /// Production never reads this.
     #[cfg(test)]
-    pub(super) fanout_fires: std::sync::atomic::AtomicU64,
+    pub(super) fanout_fires: AtomicU64,
 }
 
 /// #2291: the mutable half of [`InboundRebuildDebounce`].
@@ -141,6 +141,18 @@ pub enum BackgroundEnqueueOutcome {
     Shed,
 }
 
+/// Which queues are in a pressure or shed episode, so each warns once when an
+/// episode starts rather than once per task. An episode ends at the first
+/// enqueue that finds its queue back under the pressure threshold.
+#[derive(Default)]
+pub(super) struct PressureEpisodes {
+    fg_pressured: AtomicBool,
+    bg_pressured: AtomicBool,
+    bg_shedding: AtomicBool,
+    /// Tasks shed since the shed episode started.
+    bg_shed: AtomicU64,
+}
+
 #[derive(Clone)]
 pub struct Materializer {
     /// The foreground sender is set once during [`Self::build`] and
@@ -171,6 +183,7 @@ pub struct Materializer {
     /// has spawned and that have not finished. [`Self::settle_background`]
     /// waits for them before it reads which tasks were shed.
     pub(super) shed_persists: PendingTaskGate,
+    pub(super) pressure_episodes: Arc<PressureEpisodes>,
     /// #4208 test-only: force [`Self::try_enqueue_background`] down its Full
     /// arm without a genuinely saturated channel. The established idiom for
     /// saturating it takes the writer hostage, which also blocks the
@@ -558,6 +571,7 @@ impl Materializer {
             #[cfg(test)]
             block_count_test_hooks: BlockCountTestHooks::new(),
             shed_persists: PendingTaskGate::new(),
+            pressure_episodes: Arc::default(),
             #[cfg(any(test, feature = "test-util"))]
             force_shed_after: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(-1)),
             app_data_dir: Arc::new(OnceLock::new()),
@@ -1144,9 +1158,10 @@ impl Materializer {
             MaterializeTask::CommitFanOut(tasks) => super::dedup::dedup_tasks(tasks),
             task => vec![task],
         };
+        let shed_count = tasks.len() as u64;
         self.metrics
             .bg_dropped
-            .fetch_add(tasks.len() as u64, Ordering::Relaxed);
+            .fetch_add(shed_count, Ordering::Relaxed);
         let retryable: Vec<MaterializeTask> = tasks
             .into_iter()
             .filter(
@@ -1177,7 +1192,11 @@ impl Materializer {
                 }
             });
         }
-        tracing::warn!("background queue full, dropping task");
+        let episodes = &self.pressure_episodes;
+        episodes.bg_shed.fetch_add(shed_count, Ordering::Relaxed);
+        if !episodes.bg_shedding.swap(true, Ordering::Relaxed) {
+            tracing::warn!("background queue full, dropping task");
+        }
         BackgroundEnqueueOutcome::Shed
     }
 
@@ -1238,19 +1257,32 @@ impl Materializer {
         let bg_depth = self
             .bg_sender()
             .map_or(0, |tx| BACKGROUND_CAPACITY - tx.capacity());
+        let episodes = &self.pressure_episodes;
         if fg_depth > FOREGROUND_CAPACITY * QUEUE_PRESSURE_NUMERATOR / QUEUE_PRESSURE_DENOMINATOR {
-            tracing::warn!(
-                depth = fg_depth,
-                capacity = FOREGROUND_CAPACITY,
-                "foreground queue pressure"
-            );
+            if !episodes.fg_pressured.swap(true, Ordering::Relaxed) {
+                tracing::warn!(
+                    depth = fg_depth,
+                    capacity = FOREGROUND_CAPACITY,
+                    "foreground queue pressure"
+                );
+            }
+        } else {
+            episodes.fg_pressured.store(false, Ordering::Relaxed);
         }
         if bg_depth > BACKGROUND_CAPACITY * QUEUE_PRESSURE_NUMERATOR / QUEUE_PRESSURE_DENOMINATOR {
-            tracing::warn!(
-                depth = bg_depth,
-                capacity = BACKGROUND_CAPACITY,
-                "background queue pressure"
-            );
+            if !episodes.bg_pressured.swap(true, Ordering::Relaxed) {
+                tracing::warn!(
+                    depth = bg_depth,
+                    capacity = BACKGROUND_CAPACITY,
+                    "background queue pressure"
+                );
+            }
+        } else {
+            episodes.bg_pressured.store(false, Ordering::Relaxed);
+            if episodes.bg_shedding.swap(false, Ordering::Relaxed) {
+                let shed = episodes.bg_shed.swap(0, Ordering::Relaxed);
+                tracing::warn!(shed, "background queue shedding ended");
+            }
         }
     }
 

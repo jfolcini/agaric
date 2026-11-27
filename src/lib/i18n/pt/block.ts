@@ -242,6 +242,5 @@ export const block: Record<string, string> = {
     'Os blocos selecionados serão movidos para a lixeira, de onde podem ser restaurados.',
   'blockContext.deleteConfirmAction': 'Sim, excluir',
   'task.noneState': 'nenhum',
-  'block.daysUnit': 'dias',
   'block.repeatStatus': 'Repete {{value}}',
 }

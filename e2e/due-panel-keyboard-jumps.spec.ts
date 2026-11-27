@@ -30,6 +30,8 @@ test.describe('Due panel keyboard jumps (#5302) @journal', () => {
   test('End, Home and PageDown keep DOM focus on the cursor row', async ({ page }) => {
     const rows = page.getByTestId('due-panel-item')
     const focusedRow = page.locator('[data-testid="due-panel-item"]:focus')
+    // Today's tab: the seeded tasks, the last of them last (no priority, seeded last).
+    await page.getByTestId('due-panel-tab-today').click()
     await expect(rows.first()).toBeVisible()
     // The jump target must start outside the mounted window, or nothing is tested.
     await expect(rows.filter({ hasText: LAST_TASK })).toHaveCount(0)

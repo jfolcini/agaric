@@ -283,9 +283,6 @@ export const properties: Record<string, string> = {
   'propertiesView.mergeAction': 'Mit einer anderen Eigenschaft zusammenführen…',
   'propertiesView.copyAction': 'In einen anderen Bereich kopieren…',
   'propertiesView.deleteAction': 'Eigenschaft löschen',
-  'propertiesView.deadlineWarning': 'Fristwarnung',
-  'propertiesView.deadlineWarningDesc':
-    'Aufgaben, die innerhalb so vieler Tage fällig sind, in der Liste "Demnächst" der Agenda anzeigen. 0 schaltet die Warnung aus.',
   'propertiesView.builtIn': 'Integriert',
   'propertiesView.definitionsIn': 'Definitionen in',
   'propertiesView.copyToSpaceMenuLabel': 'Bereiche, in die {{key}} kopiert werden soll',

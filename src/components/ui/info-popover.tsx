@@ -21,11 +21,14 @@
  * closes it, stay out of a selectable row or list around it (History, an agenda
  * row that opens its task on Enter): React bubbles a portal's events to the
  * trigger's ancestors. Radix closes on Escape from its own document listener.
+ *
+ * One is open at a time, app-wide: opening one closes the other. Radix would
+ * not, as the trigger's stopped click is not a press outside to it.
  */
 
 import { cva } from 'class-variance-authority'
 import { Info, type LucideIcon } from 'lucide-react'
-import { useId } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type * as React from 'react'
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -62,12 +65,38 @@ export type InfoPopoverProps = InfoPopoverBaseProps &
       }
   )
 
+let closeOpenInfoPopover: (() => void) | null = null
+
 function InfoPopover(props: InfoPopoverProps): React.ReactElement {
   const triggerId = useId()
+  const [open, setOpen] = useState(false)
+  // Closed by another opening: focus stays on the trigger just pressed, as
+  // focus back on this one would be a focus outside the other and close it.
+  const closedByAnother = useRef(false)
+  const close = useCallback(() => {
+    closedByAnother.current = true
+    setOpen(false)
+  }, [])
+  useEffect(
+    () => () => {
+      if (closeOpenInfoPopover === close) closeOpenInfoPopover = null
+    },
+    [close],
+  )
+  const handleOpenChange = (next: boolean) => {
+    if (next) {
+      closedByAnother.current = false
+      closeOpenInfoPopover?.()
+      closeOpenInfoPopover = close
+    } else if (closeOpenInfoPopover === close) {
+      closeOpenInfoPopover = null
+    }
+    setOpen(next)
+  }
   const variant = props.variant ?? 'label'
   const Icon = (props.variant === 'icon' && props.icon) || Info
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <button
           id={triggerId}
@@ -91,6 +120,9 @@ function InfoPopover(props: InfoPopoverProps): React.ReactElement {
       <PopoverContent
         aria-labelledby={triggerId}
         className="w-auto max-w-xs p-3 text-sm"
+        onCloseAutoFocus={(e) => {
+          if (closedByAnother.current) e.preventDefault()
+        }}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
           if (e.key === 'Escape') e.stopPropagation()

@@ -5,6 +5,7 @@
  */
 
 export const pages: Record<string, string> = {
+  'journal.dayProperties': 'Eigenschaften…',
   'journal.today': 'Heute',
   'journal.dayTab': 'Tag',
   'journal.weekTab': 'Woche',
@@ -90,7 +91,7 @@ export const pages: Record<string, string> = {
   'pageHeader.removeJournalTemplate': 'Journalvorlage entfernen',
   'pageHeader.menuAddAlias': 'Alias hinzufügen',
   'pageHeader.menuAddTag': 'Tag hinzufügen',
-  'pageHeader.menuAddProperty': 'Eigenschaft hinzufügen',
+  'pageHeader.menuProperties': 'Eigenschaften…',
   'pageHeader.sectionAdd': 'Hinzufügen',
   'pageHeader.sectionView': 'Ansicht',
   'pageHeader.sectionTemplate': 'Vorlage',
@@ -423,8 +424,8 @@ export const pages: Record<string, string> = {
   'pageProperty.saveFailed': 'Eigenschaft konnte nicht gespeichert werden',
   'pageProperty.deleteFailed': 'Eigenschaft konnte nicht gelöscht werden',
   'pageProperty.addFailed': 'Eigenschaft konnte nicht hinzugefügt werden',
-  'pageProperty.toggleLabel': 'Eigenschaften ein-/ausblenden',
   'pageProperty.propertiesButton': 'Eigenschaften',
+  'pageProperty.dialogDescription': 'Die Eigenschaften dieser Seite.',
   'pageProperty.addPropertyLabel': 'Eigenschaft hinzufügen',
   'pageProperty.addPropertyButton': 'Eigenschaft hinzufügen',
   'pageProperty.addPropertyDisabledInfo':

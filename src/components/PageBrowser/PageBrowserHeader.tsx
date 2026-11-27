@@ -1,12 +1,12 @@
 /**
  * PageBrowserHeader — header for `PageBrowser`.
  *
- * Search first (#5637): the first row is the search input, the sort
- * dropdown, saved views and the New page button that opens the New page
- * dialog; below it, the named buttons that open Tags and Advanced query
+ * Search first (#5637): under the title, the first row is the search input,
+ * the count, the sort dropdown, saved views and the New page button that
+ * opens the New page dialog; below it, the named buttons that open Tags and Advanced query
  * (#5269, #6544). Graph, Templates and Trash are in the app sidebar (#7040 D2).
  * A phone gets one row (#5927): search, sort as an icon, a ⋮ menu holding
- * saved views and the view buttons, and New page as an icon.
+ * saved views and the view buttons, and New page as an outlined icon.
  * The search input is the view's primary focus only with a fine pointer, so
  * entering the view on a phone does not raise the keyboard over the list.
  * The list state lives in the orchestrator (`PageBrowser`) and is passed in
@@ -185,8 +185,9 @@ export function PageBrowserHeader({
   }
   const newPageButton = (
     <Button
-      variant={captureButtonShown ? 'ghost' : 'default'}
-      className={cn(isMobile && 'ml-auto w-9 px-0 coarse:w-(--touch-target)')}
+      variant={captureButtonShown ? 'outline' : 'default'}
+      // On a phone it pairs with the sort button: the same box, glyph and fill.
+      className={cn(isMobile && 'ml-auto w-9 px-0 coarse:w-(--touch-target) coarse:[&_svg]:size-5')}
       aria-label={t('pageBrowser.newPage')}
       onClick={() => openNewPageDialog()}
     >
@@ -198,13 +199,7 @@ export function PageBrowserHeader({
     // On a phone the header is one row, and it stays pinned while the list
     // scrolls under it (`data-sticky-search`, read by the outlet in App.tsx).
     <div className="page-browser-header space-y-2" data-sticky-search="">
-      {/* The title row holds New page; a phone's bar names the view, so its
-          New page stays on the search row. */}
-      <FeaturePageHeader
-        title={t('sidebar.pages')}
-        className="md:mt-3"
-        {...(!isMobile && { actions: newPageButton })}
-      />
+      <FeaturePageHeader title={t('sidebar.pages')} className="md:mt-3" />
       {/* On desktop `flex-wrap` lets the controls stack onto a second line
           instead of overflowing, and the search field keeps a width it can be
           typed in. A phone keeps one row: the search field shrinks, and the
@@ -238,15 +233,18 @@ export function PageBrowserHeader({
               <Tooltip>
                 <TooltipTrigger asChild>
                   <SelectTrigger
-                    // An icon button on a phone; the chevron goes with the label.
+                    // An icon button on a phone, filled like the outlined New
+                    // page beside it; the chevron goes with the label.
                     className={
                       isMobile
-                        ? 'w-9 justify-center px-0 coarse:w-(--touch-target) [&>svg:last-child]:hidden'
+                        ? 'w-9 justify-center bg-background px-0 dark:bg-input/30 coarse:w-(--touch-target) [&>svg:last-child]:hidden'
                         : 'w-auto min-w-[7rem]'
                     }
                     aria-label={t('pageBrowser.sortLabel')}
                   >
-                    {isMobile && <ArrowUpDown aria-hidden="true" />}
+                    {isMobile && (
+                      <ArrowUpDown className="size-4 coarse:size-5" aria-hidden="true" />
+                    )}
                     <span className={cn(isMobile && 'sr-only')}>
                       <SelectValue />
                     </span>
@@ -281,7 +279,7 @@ export function PageBrowserHeader({
             {viewMenuItems}
           </SavedViewsDropdown>
         )}
-        {isMobile && newPageButton}
+        {newPageButton}
       </div>
 
       {/* The names show once the row has room for them (a container query,

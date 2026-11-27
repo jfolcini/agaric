@@ -1,41 +1,54 @@
 /**
- * DuePanel -- shows blocks due on a given date, grouped by todo_state.
+ * DuePanel -- the journal day's open tasks.
  *
- * Renders on JournalPage. Groups blocks by todo_state in order:
- * DOING > TODO > DONE > CANCELLED > null (Other). Within each group, sorts by
- * priority rank (`priorityRank` from `@/lib/priority-levels`), with
- * null/unknown sorting last. Uses cursor-based pagination
- * with a `t('duePanel.loadMore')` button.
- *
- * Orchestrator that connects useDuePanelData to extracted section
- * components (OverdueSection, UpcomingSection, DuePanelFilters).
+ * On today's page and later ones the tasks sit under tabs All · Overdue ·
+ * Today · This week · Later · No date (`task-buckets.ts`), counted from that
+ * page's date, each with its count; All shows every tab's rows under its name.
+ * A past day lists the open tasks dated that day. Each list runs by date then
+ * priority, flat or (the Group choice) under one heading per page, and every
+ * row keeps its due or scheduled chip and its page. Uses cursor-based pagination for the day's own
+ * rows with a `t('duePanel.loadMore')` button.
  */
 
+import { endOfWeek } from 'date-fns'
+import { ChevronDown } from 'lucide-react'
 import type React from 'react'
-import { Fragment, useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { AlertSection } from '@/components/agenda/AlertSection'
-import { DuePanelFilters } from '@/components/agenda/DuePanelFilters'
-import { OverdueSection } from '@/components/agenda/OverdueSection'
+import { ChoiceList } from '@/components/agenda/AgendaSortGroupControls'
 import { ProjectedEntriesSection } from '@/components/agenda/ProjectedEntries'
-import { UpcomingSection } from '@/components/agenda/UpcomingSection'
+import {
+  bucketTasks,
+  byDateThenPriority,
+  groupByPage,
+  TASK_BUCKETS,
+  type TaskBucket,
+} from '@/components/agenda/task-buckets'
 import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHeader'
+import { EmptyState } from '@/components/common/EmptyState'
 import { ListViewState } from '@/components/common/ListViewState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { BlockListItem } from '@/components/editor/BlockListItem'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
+import { Button } from '@/components/ui/button'
+import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
+import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { SectionCount } from '@/components/ui/section-count'
 import { SectionGroupHeader } from '@/components/ui/section-group-header'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useDuePanelData } from '@/hooks/useDuePanelData'
 import { useKeyboardNavigableList } from '@/hooks/useKeyboardNavigableList'
+import { useToday } from '@/hooks/useToday'
 import { useVirtualizedGroupedRows } from '@/hooks/useVirtualizedGroupedRows'
+import { useWeekStart } from '@/hooks/useWeekStart'
+import type { BlockRow } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
+import { formatDate } from '@/lib/date-utils'
 import { useLocalStoragePreference } from '@/lib/local-storage-preference'
-import { priorityRank } from '@/lib/priority-levels'
-import { TASK_STATE_SORT_ORDER } from '@/lib/task-states'
+import { cn } from '@/lib/utils'
 
 export interface DuePanelProps {
   date: string // YYYY-MM-DD
@@ -48,23 +61,49 @@ export interface DuePanelProps {
   excludePageId?: string | undefined
 }
 
-// Every state a visible block can carry needs a group here, or it would be
-// hidden from the list while still counting in `visibleBlocks` — the header
-// saying "3 due" over 2 rows that #738 sub-1 fixed by adding CANCELLED.
-//
-// DONE stays even though #5074 keeps completed tasks out of the agenda fetch
-// entirely: the header counts `visibleBlocks.length` while the rows come from
-// this list, so dropping a state here makes the two agree only for as long as
-// some filter elsewhere holds. An always-empty group costs one unused label
-// and is dropped by the `items.length > 0` filter below; a missing one brings
-// the #738 desync back silently.
-const GROUP_ORDER = [...TASK_STATE_SORT_ORDER, null] as const
+type Tab = 'all' | TaskBucket
 
-/** Each filter segment's header bucket. */
-const SEGMENT_BUCKETS: Partial<Record<string, 'due' | 'scheduled' | 'property'>> = {
-  'column:due_date': 'due',
-  'column:scheduled_date': 'scheduled',
-  'property:': 'property',
+const BUCKET_LABEL_KEYS: Record<Tab, string> = {
+  all: 'duePanel.tabAll',
+  overdue: 'duePanel.tabOverdue',
+  today: 'duePanel.tabToday',
+  thisWeek: 'duePanel.tabThisWeek',
+  later: 'duePanel.tabLater',
+  noDate: 'duePanel.tabNoDate',
+}
+
+type PanelGroupBy = 'none' | 'page'
+
+const GROUP_LABEL_KEYS: Record<PanelGroupBy, string> = {
+  none: 'agenda.groupNone',
+  page: 'agenda.groupPage',
+}
+const GROUP_CHOICES = [
+  { value: 'none', labelKey: GROUP_LABEL_KEYS.none },
+  { value: 'page', labelKey: GROUP_LABEL_KEYS.page },
+] as const
+
+// Per device, like the Agenda's grouping (`useAgendaPreferences`).
+const GROUP_BY_OPTIONS = {
+  parse: (raw: string): PanelGroupBy => {
+    if (raw === 'none' || raw === 'page') return raw
+    throw new Error('invalid groupBy')
+  },
+  serialize: (value: PanelGroupBy): string => value,
+  source: 'DuePanel',
+}
+
+/** A run of rows under one heading: a tab's name on All, or a page's (Group: Page). */
+type PanelGroup =
+  | { kind: 'bucket'; key: string; bucket: TaskBucket; rows: BlockRow[] }
+  | { kind: 'page'; key: string; pageId: string | null; nested: boolean; rows: BlockRow[] }
+
+const DAY_MS = 1000 * 60 * 60 * 24
+
+function daysBetween(from: string, to: string): number {
+  return Math.round(
+    (new Date(`${to}T00:00:00`).getTime() - new Date(`${from}T00:00:00`).getTime()) / DAY_MS,
+  )
 }
 
 export function DuePanel({
@@ -72,22 +111,20 @@ export function DuePanel({
   onNavigateToPage,
   excludePageId,
 }: DuePanelProps): React.ReactElement | null {
+  // The React Compiler caches `virtualizer.getVirtualItems()` on the
+  // virtualizer's stable identity, so the rows never followed a scroll.
+  'use no memo'
   const { t } = useTranslation()
   const [collapsed, setCollapsed] = useState(false)
-  const [sourceFilter, setSourceFilter] = useState<string | null>(null)
-
-  // On-disk format is the bare boolean (`'true'` / `'false'`); JSON.parse
-  // and JSON.stringify both round-trip these values, so the default
-  // parse/serialize keep wire-format compatibility.
-  const [hideBeforeScheduled, setHideBeforeScheduled] = useLocalStoragePreference<boolean>(
-    'agaric:hideBeforeScheduled',
-    false,
-    { source: 'DuePanel' },
+  const [tab, setTab] = useState<Tab>('all')
+  const [groupOpen, setGroupOpen] = useState(false)
+  const [groupBy, setGroupBy] = useLocalStoragePreference<PanelGroupBy>(
+    'agaric:duePanel:groupBy',
+    'none',
+    GROUP_BY_OPTIONS,
   )
-
-  const toggleHideBeforeScheduled = useCallback(() => {
-    setHideBeforeScheduled((prev) => !prev)
-  }, [setHideBeforeScheduled])
+  const { weekStartsOn } = useWeekStart()
+  const todayStr = useToday()
 
   const {
     blocks,
@@ -96,12 +133,11 @@ export function DuePanel({
     pageTitles,
     projectedEntries,
     projectedLoading,
-    overdueBlocks,
-    scheduledEarlierBlocks,
-    upcomingBlocks,
-    isToday,
+    openTasks,
+    openTasksLoading,
+    fromToday,
     loadMore,
-  } = useDuePanelData({ date, sourceFilter, excludePageId })
+  } = useDuePanelData({ date, excludePageId })
 
   const toggleCollapsed = useCallback(() => {
     setCollapsed((prev) => !prev)
@@ -113,94 +149,68 @@ export function DuePanel({
     untitledLabel: t('block.untitled'),
   })
 
-  // Filter out blocks scheduled after the panel's subject day when toggle is ON.
-  const visibleBlocks = useMemo(() => {
-    if (!hideBeforeScheduled) return blocks
-    return blocks.filter((b) => {
-      if (b.scheduled_date && b.scheduled_date > date) return false
-      return true
-    })
-  }, [blocks, date, hideBeforeScheduled])
+  const buckets = useMemo(() => {
+    if (!fromToday) return null
+    const weekEnd = formatDate(endOfWeek(new Date(`${date}T00:00:00`), { weekStartsOn }))
+    return bucketTasks(blocks, openTasks, date, weekEnd)
+  }, [fromToday, blocks, openTasks, date, weekStartsOn])
 
-  // Combined items array for ListViewState empty detection
-  const allDisplayItems = useMemo(
-    () =>
-      [
-        ...blocks,
-        ...overdueBlocks,
-        ...scheduledEarlierBlocks,
-        ...upcomingBlocks,
-        ...projectedEntries,
-      ] as unknown[],
-    [blocks, overdueBlocks, scheduledEarlierBlocks, upcomingBlocks, projectedEntries],
-  )
+  const dayRows = useMemo(() => blocks.toSorted(byDateThenPriority(date)), [blocks, date])
 
-  // #1540 — Date-equality breakdown heuristic, NOT an authoritative per-source
-  // tally. The backend selects agenda blocks by `agendaSource` (due / scheduled
-  // / arbitrary date properties) and returns them as a flat array with no
-  // per-block source tag, so the panel cannot recover which source actually
-  // matched each block. We instead classify by date equality in priority order
-  // (due > scheduled > property): a block with `due_date === date` is bucketed
-  // as "due" even if it was selected by a date property, and a block with both
-  // dates equal to `date` counts once, as "due". The buckets are therefore an
-  // approximate breakdown of the visible set, not a reconstruction of the
-  // backend's selection — treat the three numbers as a date-based summary that
-  // always sums to `visibleBlocks.length`. A chosen segment fetched its own
-  // source's rows alone, so under one every row counts as that segment.
-  const sourceCounts = useMemo(() => {
-    const counts = { due: 0, scheduled: 0, property: 0 }
-    const chosen = sourceFilter === null ? undefined : SEGMENT_BUCKETS[sourceFilter]
-    if (chosen !== undefined) return { ...counts, [chosen]: visibleBlocks.length }
-    for (const b of visibleBlocks) {
-      if (b.due_date === date) counts.due++
-      else if (b.scheduled_date === date) counts.scheduled++
-      else counts.property++
-    }
-    return counts
-  }, [visibleBlocks, date, sourceFilter])
-
-  // ── Keyboard navigation ────────────────────────────────────
-
-  // Group blocks for display (computed early so flatItems can be derived).
-  // FE-H-19: memoized to keep reference-stable across renders — otherwise the
-  // `flatItems` memo below would recompute every render because `grouped`
-  // would change identity, which would in turn reset keyboard-nav focus.
-  // `groupLabels` is kept inside the memo so it isn't a per-render dep.
-  const grouped = useMemo(() => {
-    const groupLabels: Record<string, string> = {
-      DOING: t('duePanel.groupDoing'),
-      TODO: t('duePanel.groupTodo'),
-      DONE: t('duePanel.groupDone'),
-      CANCELLED: t('duePanel.groupCancelled'),
-    }
-    return GROUP_ORDER.map((state) => {
-      const items = visibleBlocks
-        .filter((b) => b.todo_state === state)
-        .toSorted((a, b) => priorityRank(a.priority) - priorityRank(b.priority))
-      return {
-        state,
-        label: state ? (groupLabels[state] ?? state) : t('duePanel.groupOther'),
-        items,
-      }
-    }).filter((g) => g.items.length > 0)
-  }, [visibleBlocks, t])
-
-  // Deduplicate: exclude projected entries whose block already appears in real
-  // agenda. Computed once here so the result is shared by the keyboard nav
-  // Flat-items array AND the rendered projected `<li>`s.
+  // A projected occurrence of one of the day's own rows is that row. An open task
+  // dated another day is not: its next occurrence still lists on this day.
   const uniqueProjected = useMemo(() => {
-    const realBlockIds = new Set(blocks.map((b) => b.id))
-    return projectedEntries.filter((e) => !realBlockIds.has(e.block.id))
+    const listed = new Set(blocks.map((b) => b.id))
+    return projectedEntries.filter((e) => !listed.has(e.block.id))
   }, [blocks, projectedEntries])
 
-  // Flat-items array threads grouped blocks AND projected entries so arrow-key
-  // navigation can reach the projected `<li>` items at the bottom of the list.
-  // FE-H-19: memoized to keep reference-stable across renders — otherwise the
-  // keyboard-nav `itemCount` / `onSelect` reads below recompute on every parent
-  // render, invalidating effects that depend on `flatItems` identity.
+  /** The visible list's sections, in order: one per non-empty bucket on All. */
+  const sections = useMemo((): { bucket: TaskBucket | null; rows: BlockRow[] }[] => {
+    if (buckets === null) return [{ bucket: null, rows: dayRows }]
+    if (tab !== 'all') return [{ bucket: null, rows: buckets[tab] }]
+    return TASK_BUCKETS.filter((b) => buckets[b].length > 0).map((b) => ({
+      bucket: b,
+      rows: buckets[b],
+    }))
+  }, [buckets, dayRows, tab])
+
+  // The day's own rows and its projected occurrences list under Today.
+  const showsToday = buckets === null || tab === 'all' || tab === 'today'
+  const listedProjected = useMemo(
+    () => (showsToday ? uniqueProjected : []),
+    [showsToday, uniqueProjected],
+  )
+
+  // The headed runs the virtualizer windows as rows, a page's under its tab's
+  // name; `null` when the one list has no heading (one tab, or a past day).
+  const groups = useMemo((): PanelGroup[] | null => {
+    if (groupBy === 'none' && sections.every((s) => s.bucket === null)) return null
+    return sections.flatMap(({ bucket, rows }): PanelGroup[] => {
+      if (rows.length === 0) return []
+      const heading = (headed: BlockRow[]): PanelGroup[] =>
+        bucket === null ? [] : [{ kind: 'bucket', key: bucket, bucket, rows: headed }]
+      if (groupBy === 'none') return heading(rows)
+      return [
+        ...heading([]),
+        ...groupByPage(rows).map((g): PanelGroup => ({
+          kind: 'page',
+          key: `${bucket ?? ''}:${g.pageId ?? ''}`,
+          pageId: g.pageId,
+          nested: bucket !== null,
+          rows: g.rows,
+        })),
+      ]
+    })
+  }, [sections, groupBy])
+  const ungroupedRows = groups === null ? sections[0]?.rows : undefined
+
+  // In the order the rows are drawn, so the keyboard cursor and Enter name the same row.
   const flatItems = useMemo(
-    () => [...grouped.flatMap((g) => g.items), ...uniqueProjected.map((e) => e.block)],
-    [grouped, uniqueProjected],
+    () => [
+      ...(groups === null ? (ungroupedRows ?? []) : groups.flatMap((g) => g.rows)),
+      ...listedProjected.map((e) => e.block),
+    ],
+    [groups, ungroupedRows, listedProjected],
   )
 
   const {
@@ -213,99 +223,228 @@ export function DuePanel({
       const block = flatItems[idx]
       if (block) handleBlockClick(block)
     },
-    {
-      homeEnd: true,
-      pageUpDown: true,
-      // Composite signature so any of the three filter/date inputs reset focus.
-      resetKey: `${sourceFilter ?? ''}|${hideBeforeScheduled}|${date}`,
-    },
+    { homeEnd: true, pageUpDown: true, resetKey: `${tab}|${date}` },
   )
 
-  // ── Virtualization (perf-review Tier 2 #6, 2026-05-14; #2252) ──────
-  // Shared grouped-list scaffolding: `useVirtualizedGroupedRows` flattens
-  // the grouped-blocks section into header/item rows so the virtualizer
-  // can drop offscreen groups in their entirety instead of mounting every
-  // sub-list, and owns the focused-row scroll-into-view effect. Overdue /
-  // Upcoming / projected entries stay un-virtualized — they're rendered
-  // outside the virtualizer and their item counts are small
-  // (overdue/upcoming caps at PAGINATION, projected is bounded by the
-  // repeat-projection horizon).
-  // `flatItemIndex` indexes the grouped-blocks portion of `flatItems`
-  // (= `grouped.flatMap(g => g.items)`); the projected portion sits at
-  // tail indices and is keyboard-navigable via its own `<li>` markup
-  // below, so the hook's focus mapping only needs to cover the grouped
-  // portion (a projected-tail `focusedIndex` has no map entry → no-op).
+  // Hundreds of open tasks are common, so only the rows in view mount; the
+  // projected tail is short and renders after the window.
   const scrollParentRef = useRef<HTMLDivElement>(null)
-
   const { virtualRows, virtualizer } = useVirtualizedGroupedRows({
-    groups: grouped,
-    getGroupKey: (g) => g.label,
-    getGroupItems: (g) => g.items,
-    // Header rows ~32px (SectionGroupHeader text + padding); item rows
-    // ~44px (BlockListItem default + the touch minimum).
+    groups,
+    ungroupedItems: ungroupedRows,
+    getGroupKey: (g) => g.key,
+    getGroupItems: (g) => g.rows,
     headerHeight: 32,
     itemHeight: 44,
     focusedIndex,
     scrollParentRef,
   })
 
-  // Don't render when ALL sources are empty (not loading).
-  // When a source filter is active, always keep the panel visible so the
-  // user can switch back to `t('duePanel.filterAll')` — otherwise the filter pills vanish.
-  if (!loading && !projectedLoading && allDisplayItems.length === 0 && sourceFilter === null) {
-    return null
+  const anyLoading = loading || projectedLoading || openTasksLoading
+  const allItems = [...blocks, ...openTasks, ...uniqueProjected] as unknown[]
+  if (!anyLoading && allItems.length === 0) return null
+
+  // Today's projected occurrences count under Today, and so under All.
+  const tabCount = (value: Tab): number => {
+    if (buckets === null) return 0
+    const counted: readonly TaskBucket[] = value === 'all' ? TASK_BUCKETS : [value]
+    const projected = value === 'all' || value === 'today' ? uniqueProjected.length : 0
+    return counted.reduce((sum, b) => sum + buckets[b].length, projected)
   }
 
-  // The header counts by the filter segments' own names, each source that has
-  // rows; with none, the chosen segment's zero (Due's under All).
-  const sourceParts = [
-    { source: 'column:due_date', label: t('duePanel.filterDue'), count: sourceCounts.due },
-    {
-      source: 'column:scheduled_date',
-      label: t('duePanel.filterScheduled'),
-      count: sourceCounts.scheduled,
-    },
-    { source: 'property:', label: t('duePanel.filterProperties'), count: sourceCounts.property },
-  ]
-  const nonEmptyParts = sourceParts.filter((part) => part.count > 0)
-  const headerParts =
-    nonEmptyParts.length > 0
-      ? nonEmptyParts
-      : sourceParts.filter((part) => part.source === (sourceFilter ?? 'column:due_date'))
+  /** How long ago a row's passed date was, counted from the real today on every page. */
+  const ageNote = (block: BlockRow): string | undefined => {
+    if (block.due_date != null && block.due_date < todayStr) {
+      return `(${t('duePanel.daysOverdue', { count: daysBetween(block.due_date, todayStr) })})`
+    }
+    if (block.scheduled_date != null && block.scheduled_date < todayStr) {
+      return `(${t('duePanel.scheduledDaysAgo', { count: daysBetween(block.scheduled_date, todayStr) })})`
+    }
+    return undefined
+  }
+
+  const renderRow = (
+    block: BlockRow,
+    index: number,
+    inPageGroup: boolean,
+    virtual: { key: React.Key; index: number; style: React.CSSProperties },
+  ) => {
+    const rowHandlers = getRowHandlers(block)
+    const note = ageNote(block)
+    return (
+      <BlockListItem
+        key={virtual.key}
+        liRef={virtualizer.measureElement}
+        dataIndex={virtual.index}
+        style={virtual.style}
+        blockId={block.id}
+        content={block.content}
+        contentMaxLength={120}
+        emptyContentFallback={t('duePanel.emptyContent')}
+        taskState={block.todo_state}
+        priority={block.priority}
+        priorityBadgeClassName="due-panel-priority"
+        dueDate={block.due_date}
+        scheduledDate={block.scheduled_date}
+        {...(note !== undefined && { note })}
+        pageId={block.page_id}
+        pageTitle={block.page_id ? (pageTitles.get(block.page_id) ?? t('duePanel.untitled')) : ''}
+        breadcrumbArrow={t('duePanel.breadcrumbArrow')}
+        className="due-panel-item hover:bg-muted/50 active:bg-muted/70 ml-2 max-w-[calc(100%-0.5rem)]"
+        contentClassName="due-panel-item-text"
+        // Under its page's heading a row does not name the page again.
+        breadcrumbClassName={cn('due-panel-breadcrumb', inPageGroup && 'hidden')}
+        testId="due-panel-item"
+        onClick={rowHandlers.onClick}
+        onKeyDown={rowHandlers.onKeyDown}
+        isFocused={focusedIndex === index}
+      />
+    )
+  }
+
+  const pageHeading = (pageId: string | null): string =>
+    pageId ? (pageTitles.get(pageId) ?? t('duePanel.untitled')) : t('duePanel.untitled')
+
+  const list = (
+    // #1520 — roving tabindex: the focused row is the one tab stop, so the
+    // container carries no `tabIndex`; keydown bubbles up from the row.
+    // oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- keyboard nav container (events bubble from the roving row); not itself focusable
+    <div
+      className="due-panel-content mt-1 space-y-2"
+      ref={listRef}
+      onKeyDown={(e) => {
+        if (navHandleKeyDown(e)) e.preventDefault()
+      }}
+    >
+      {flatItems.length === 0 && !anyLoading && (
+        <EmptyState compact message={t('duePanel.emptyTab')} />
+      )}
+      {virtualRows.length > 0 && (
+        <ScrollArea
+          viewportRef={scrollParentRef}
+          // The padding keeps the last row's chips their whole hit area, which
+          // reaches below the row: the viewport clips there.
+          viewportClassName="due-panel-scroll max-h-[calc(100dvh-260px)] pb-2"
+        >
+          <ul
+            className="due-panel-blocks relative m-0 list-none p-0"
+            style={{ height: `${virtualizer.getTotalSize()}px` }}
+          >
+            {virtualizer.getVirtualItems().map((virtualRow) => {
+              const row = virtualRows[virtualRow.index]
+              if (!row) return null
+              // Placed by `top`, not a transform: a transformed row is a stacking
+              // context, and the row after it would cover the 44 px hit area a
+              // chip on this row's last line reaches below it with.
+              const style: React.CSSProperties = {
+                position: 'absolute',
+                top: virtualRow.start,
+                left: 0,
+                width: '100%',
+              }
+              if (row.kind === 'item') {
+                return renderRow(row.item, row.flatItemIndex, groupBy === 'page', {
+                  key: virtualRow.key,
+                  index: virtualRow.index,
+                  style,
+                })
+              }
+              const group = row.group
+              return (
+                <li
+                  key={virtualRow.key}
+                  data-index={virtualRow.index}
+                  ref={virtualizer.measureElement}
+                  style={style}
+                  {...(group.kind === 'page' && { 'data-testid': 'due-panel-page-group' })}
+                >
+                  {group.kind === 'bucket' ? (
+                    <SectionGroupHeader
+                      asChild
+                      className={
+                        group.bucket === 'overdue' ? 'text-alert-error-foreground' : undefined
+                      }
+                    >
+                      <h2>{t(BUCKET_LABEL_KEYS[group.bucket])}</h2>
+                    </SectionGroupHeader>
+                  ) : (
+                    <SectionGroupHeader asChild className="pl-4">
+                      {group.nested ? (
+                        <h3>{pageHeading(group.pageId)}</h3>
+                      ) : (
+                        <h2>{pageHeading(group.pageId)}</h2>
+                      )}
+                    </SectionGroupHeader>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        </ScrollArea>
+      )}
+      <ProjectedEntriesSection
+        entries={listedProjected}
+        pageTitles={pageTitles}
+        firstFlatIndex={flatItems.length - listedProjected.length}
+        focusedIndex={focusedIndex}
+        onNavigateToPage={onNavigateToPage}
+      />
+      <LoadMoreButton
+        hasMore={hasMore && showsToday}
+        loading={loading}
+        onLoadMore={loadMore}
+        className="due-panel-load-more"
+        label={t('duePanel.loadMore')}
+        loadingLabel={t('duePanel.loading')}
+        ariaLabel={t('duePanel.loadMoreLabel')}
+        ariaLoadingLabel={t('duePanel.loadingMore')}
+      />
+    </div>
+  )
 
   return (
     <section className="due-panel" aria-label={t('duePanel.duePanelLabel')} data-testid="due-panel">
-      {/* Main header -- collapsible, always visible */}
-      <CollapsiblePanelHeader
-        isCollapsed={collapsed}
-        onToggle={toggleCollapsed}
-        className="due-panel-header"
-        testId="due-panel-header"
-      >
-        <span>
-          {headerParts.map((part, i) => (
-            <Fragment key={part.label}>
-              {i > 0 && ' \u00B7 '}
-              <SectionCount label={part.label} count={part.count} />
-            </Fragment>
-          ))}
-        </span>
-      </CollapsiblePanelHeader>
-
-      {!collapsed && (
-        <DuePanelFilters
-          sourceFilter={sourceFilter}
-          onSourceFilterChange={setSourceFilter}
-          hideBeforeScheduled={hideBeforeScheduled}
-          onToggleHideBeforeScheduled={toggleHideBeforeScheduled}
-          sourceCounts={sourceCounts}
-        />
-      )}
+      <div className="flex items-center gap-2">
+        <CollapsiblePanelHeader
+          isCollapsed={collapsed}
+          onToggle={toggleCollapsed}
+          className="due-panel-header flex-1"
+          testId="due-panel-header"
+        >
+          {t('duePanel.heading')}
+        </CollapsiblePanelHeader>
+        {!collapsed && (
+          <Popover open={groupOpen} onOpenChange={setGroupOpen} sheetTitle={t('agenda.groupBy')}>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="xs"
+                className="shrink-0 coarse:h-(--touch-target)"
+                data-testid="due-panel-group"
+              >
+                {t('duePanel.groupButton', { choice: t(GROUP_LABEL_KEYS[groupBy]) })}
+                <ChevronDown aria-hidden="true" />
+              </Button>
+            </PopoverTrigger>
+            <MenuPopoverContent align="end" className="w-40" aria-label={t('agenda.groupBy')}>
+              <ChoiceList
+                label={t('agenda.groupBy')}
+                value={groupBy}
+                options={GROUP_CHOICES}
+                onChange={(value) => {
+                  setGroupBy(value)
+                  setGroupOpen(false)
+                }}
+              />
+            </MenuPopoverContent>
+          </Popover>
+        )}
+      </div>
 
       {!collapsed && (
         <ListViewState
-          loading={loading || projectedLoading}
-          items={allDisplayItems}
+          loading={anyLoading && allItems.length === 0}
+          items={allItems}
           skeleton={
             <div
               className="due-panel-loading flex items-center gap-2 px-2 py-2"
@@ -316,179 +455,27 @@ export function DuePanel({
               <LoadingSkeleton count={3} height="h-10" />
             </div>
           }
-          empty={
-            sourceFilter !== null ? (
-              <p className="px-3 py-2 text-sm text-muted-foreground">
-                {t('duePanel.noItemsForFilter')}
-              </p>
-            ) : null
-          }
+          empty={null}
         >
-          {() => {
-            // Projected entries sit after grouped blocks in the
-            // keyboard-nav `flatItems` array (see `flatItems` memo
-            // above). The grouped portion now lives inside the
-            // virtualizer (which tracks its own `flatItemIndex` per
-            // row); the projected `<li>` markup below picks up where
-            // grouped left off.
-            const groupedCount = grouped.reduce((sum, g) => sum + g.items.length, 0)
-            return (
-              // #1520 — roving tabindex: the focused `BlockListItem` row is the
-              // single tab stop (the rest are `tabIndex=-1`), so the container
-              // itself must NOT carry `tabIndex={0}` or the list would have a
-              // doubled keyboard model (one container stop + the roving row).
-              // The arrow-key handler stays on the container and still fires
-              // because keydown events bubble up from the focused row.
-              // oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- keyboard nav container (events bubble from the roving row); not itself focusable
-              <div
-                className="due-panel-content mt-1 space-y-2"
-                ref={listRef}
-                onKeyDown={(e) => {
-                  if (navHandleKeyDown(e)) e.preventDefault()
-                }}
-              >
-                {/* Overdue section */}
-                {isToday && (
-                  <OverdueSection
-                    blocks={overdueBlocks}
-                    pageTitles={pageTitles}
-                    onNavigateToPage={onNavigateToPage}
-                  />
-                )}
-
-                {/* Open tasks scheduled before today, not yet overdue (#7040) */}
-                {isToday && (
-                  <AlertSection
-                    variant="scheduled"
-                    title={t('duePanel.scheduledEarlierTitle')}
-                    blocks={scheduledEarlierBlocks}
-                    pageTitles={pageTitles}
-                    onNavigateToPage={onNavigateToPage}
-                  />
-                )}
-
-                {/* Upcoming section */}
-                {isToday && (
-                  <UpcomingSection
-                    blocks={upcomingBlocks}
-                    pageTitles={pageTitles}
-                    onNavigateToPage={onNavigateToPage}
-                  />
-                )}
-
-                {/* Grouped blocks (virtualized — perf-review Tier 2 #6).
-                    A single `<ul>` parent holds both group-header `<li>`s
-                    and item `<li>`s (the latter rendered by
-                    `BlockListItem`). Flat-list virtualization lets the
-                    windowing skip offscreen groups entirely instead of
-                    mounting every sub-list. */}
-                {virtualRows.length > 0 && (
-                  <ScrollArea
-                    viewportRef={scrollParentRef}
-                    // The padding keeps the last row's chips their whole hit
-                    // area, which reaches below the row: the viewport clips there.
-                    viewportClassName="due-panel-scroll max-h-[calc(100dvh-260px)] pb-2"
-                  >
-                    <ul
-                      className="due-panel-blocks relative m-0 p-0 list-none"
-                      style={{ height: `${virtualizer.getTotalSize()}px` }}
-                    >
-                      {virtualizer.getVirtualItems().map((virtualRow) => {
-                        const row = virtualRows[virtualRow.index]
-                        if (!row) return null
-                        // Placed by `top`, not a transform: a transformed row is a
-                        // stacking context, and the row after it would cover the
-                        // 44 px hit area a chip on this row's last line reaches
-                        // below it with (`touch-hit-area`).
-                        const rowStyle: React.CSSProperties = {
-                          position: 'absolute',
-                          top: virtualRow.start,
-                          left: 0,
-                          width: '100%',
-                        }
-                        if (row.kind === 'group-header') {
-                          return (
-                            <li
-                              key={virtualRow.key}
-                              data-index={virtualRow.index}
-                              ref={virtualizer.measureElement}
-                              style={rowStyle}
-                              className="due-panel-group-header-row"
-                            >
-                              <SectionGroupHeader className="due-panel-group-header">
-                                {row.group.label}
-                              </SectionGroupHeader>
-                            </li>
-                          )
-                        }
-                        // Tier 1.4: stable per-block handlers.
-                        const block = row.item
-                        const rowHandlers = getRowHandlers(block)
-                        return (
-                          <BlockListItem
-                            key={virtualRow.key}
-                            liRef={virtualizer.measureElement}
-                            dataIndex={virtualRow.index}
-                            style={rowStyle}
-                            blockId={block.id}
-                            content={block.content}
-                            contentMaxLength={120}
-                            emptyContentFallback={t('duePanel.emptyContent')}
-                            // Typed metadata primitives — `BlockListItem`
-                            // renders the chips internally so the memo
-                            // shallow-compare hits cleanly across parent
-                            // re-renders (perf-review Tier 1.4 metadata
-                            // half, 2026-05-14).
-                            taskState={block.todo_state}
-                            priority={block.priority}
-                            priorityBadgeClassName="due-panel-priority"
-                            dueDate={block.due_date}
-                            scheduledDate={block.scheduled_date}
-                            pageId={block.page_id}
-                            pageTitle={
-                              block.page_id
-                                ? (pageTitles.get(block.page_id) ?? t('duePanel.untitled'))
-                                : ''
-                            }
-                            breadcrumbArrow={t('duePanel.breadcrumbArrow')}
-                            className="due-panel-item hover:bg-muted/50 active:bg-muted/70 ml-2 max-w-[calc(100%-0.5rem)]"
-                            contentClassName="due-panel-item-text"
-                            breadcrumbClassName="due-panel-breadcrumb"
-                            testId="due-panel-item"
-                            onClick={rowHandlers.onClick}
-                            onKeyDown={rowHandlers.onKeyDown}
-                            isFocused={focusedIndex === row.flatItemIndex}
-                          />
-                        )
-                      })}
-                    </ul>
-                  </ScrollArea>
-                )}
-
-                {/* Projected future occurrences from repeating tasks,
-                    at the tail of the keyboard-nav flat-items array. */}
-                <ProjectedEntriesSection
-                  entries={uniqueProjected}
-                  pageTitles={pageTitles}
-                  firstFlatIndex={groupedCount}
-                  focusedIndex={focusedIndex}
-                  onNavigateToPage={onNavigateToPage}
-                />
-
-                {/* Load more */}
-                <LoadMoreButton
-                  hasMore={hasMore}
-                  loading={loading}
-                  onLoadMore={loadMore}
-                  className="due-panel-load-more"
-                  label={t('duePanel.loadMore')}
-                  loadingLabel={t('duePanel.loading')}
-                  ariaLabel={t('duePanel.loadMoreLabel')}
-                  ariaLoadingLabel={t('duePanel.loadingMore')}
-                />
-              </div>
+          {() =>
+            buckets === null ? (
+              list
+            ) : (
+              <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
+                {/* Six tabs do not fit a phone's width: the row scrolls sideways. */}
+                <ScrollArea orientation="horizontal" viewportClassName="pb-1">
+                  <TabsList className="w-max min-w-full px-2" aria-label={t('duePanel.tabsLabel')}>
+                    {(['all', ...TASK_BUCKETS] as const).map((value) => (
+                      <TabsTrigger key={value} value={value} data-testid={`due-panel-tab-${value}`}>
+                        <SectionCount label={t(BUCKET_LABEL_KEYS[value])} count={tabCount(value)} />
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+                </ScrollArea>
+                <TabsContent value={tab}>{list}</TabsContent>
+              </Tabs>
             )
-          }}
+          }
         </ListViewState>
       )}
     </section>

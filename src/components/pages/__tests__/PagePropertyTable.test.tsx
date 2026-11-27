@@ -67,6 +67,7 @@ vi.mock('lucide-react', () => ({
   Plus: () => <svg data-testid="plus-icon" />,
   Repeat: () => <svg data-testid="repeat-icon" />,
   TriangleAlert: () => <svg data-testid="triangle-alert-icon" />,
+  XIcon: () => <svg data-testid="x-icon" />,
   User: () => <svg data-testid="user-icon" />,
   X: () => <svg data-testid="x-icon" />,
 }))
@@ -85,6 +86,15 @@ import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
 
 const mockedToastError = vi.mocked(toast.error)
+
+const noop = (): void => {}
+
+/** Opens the Add property picker once its button is enabled (it waits for the load). */
+async function openAddPicker(): Promise<void> {
+  const button = await screen.findByRole('button', { name: t('pageProperty.addPropertyButton') })
+  await waitFor(() => expect(button).toBeEnabled())
+  fireEvent.click(button)
+}
 
 function makeDef(key: string, valueType: string, options?: string): PropertyDefinition {
   return {
@@ -168,68 +178,115 @@ function setupMock(props: PropertyRow[] = [], defs: PropertyDefinition[] = []) {
 }
 
 describe('PagePropertyTable rendering', () => {
-  it('does not render when no properties and not forced', async () => {
-    setupMock()
-    const { container } = render(<PagePropertyTable pageId="PAGE_1" />)
+  // #7155 R13 — the page header opens it; closed, it shows nothing.
+  it('renders nothing while closed', async () => {
+    setupMock([makeProp('status', { value_text: 'active' })], [makeDef('status', 'text')])
+    render(<PagePropertyTable pageId="PAGE_1" open={false} onOpenChange={noop} />)
 
-    // Flush pending async data loading so the component can settle
     await act(async () => {})
 
-    // After loading completes with empty properties, component returns null
-    await waitFor(() => {
-      expect(screen.queryByRole('button', { name: /Properties/ })).not.toBeInTheDocument()
-      expect(container.querySelector('.page-property-table')).not.toBeInTheDocument()
-    })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(
+      screen.queryByLabelText(t('pageProperty.valueLabel', { key: 'status' })),
+    ).not.toBeInTheDocument()
   })
 
-  it('renders collapsed by default with toggle button when properties exist', async () => {
+  it('opens as a dialog titled Properties, showing the property rows', async () => {
     setupMock([makeProp('status', { value_text: 'active' })], [makeDef('status', 'text')])
-    render(<PagePropertyTable pageId="PAGE_1" />)
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
-    await waitFor(() => {
-      const toggle = screen.getByRole('button', { name: /Properties/ })
-      expect(toggle).toBeInTheDocument()
-      expect(toggle).toHaveTextContent(t('pageProperty.propertiesButton'))
-    })
-    // Should not show any property rows when collapsed
-    expect(screen.queryByLabelText(/value$/i)).not.toBeInTheDocument()
+    const dialog = await screen.findByRole('dialog', { name: t('pageProperty.propertiesButton') })
+    expect(
+      await within(dialog).findByLabelText(t('pageProperty.valueLabel', { key: 'status' })),
+    ).toHaveValue('active')
   })
 
   // #6755 — the tags' suggested keys are read when the table opens, not on
   // every page open (the #5445 perf spec pins a page open's IPC).
   it("reads the tags' suggested keys once the table opens, and shows them", async () => {
-    const user = userEvent.setup()
     stubInvoke({
       get_properties: () => [makeProp('status', { value_text: 'active' })],
       list_property_defs: () => defsPage([makeDef('status', 'text'), makeDef('author', 'text')]),
       list_suggested_properties: () => [{ key: 'author', tag_id: 'TAG_1', tag_name: 'book' }],
     })
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    const toggle = await screen.findByRole('button', { name: /Properties/ })
+    const { rerender } = render(
+      <PagePropertyTable pageId="PAGE_1" open={false} onOpenChange={noop} />,
+    )
+    await act(async () => {})
     const suggestionReads = () =>
       mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_suggested_properties').length
     expect(suggestionReads()).toBe(0)
 
-    await user.click(toggle)
+    rerender(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
     expect(await screen.findByText(t('property.suggestedFrom', { tag: 'book' }))).toBeVisible()
     expect(suggestionReads()).toBe(1)
   })
 
-  it('expands to show property rows after clicking toggle', async () => {
+  it('closes through onOpenChange from its close button', async () => {
     const user = userEvent.setup()
+    const onOpenChange = vi.fn()
     setupMock([makeProp('status', { value_text: 'active' })], [makeDef('status', 'text')])
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={onOpenChange} />)
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
+    const dialog = await screen.findByRole('dialog', { name: t('pageProperty.propertiesButton') })
+    await user.click(within(dialog).getByRole('button', { name: /close/i }))
 
-    const toggle = screen.getByRole('button', { name: /Properties/ })
-    await user.click(toggle)
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
 
-    await waitFor(() => {
-      expect(
-        screen.getByLabelText(t('pageProperty.valueLabel', { key: 'status' })),
-      ).toBeInTheDocument()
-    })
+  // A focused value would raise a phone's keyboard over the sheet.
+  it('focuses the dialog itself on open, then returns focus to what opened it', async () => {
+    setupMock([makeProp('status', { value_text: 'active' })], [makeDef('status', 'text')])
+    const { rerender } = render(
+      <>
+        <button type="button">chip</button>
+        <PagePropertyTable pageId="PAGE_1" open={false} onOpenChange={noop} />
+      </>,
+    )
+    const opener = screen.getByRole('button', { name: 'chip' })
+    opener.focus()
+
+    rerender(
+      <>
+        <button type="button">chip</button>
+        <PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />
+      </>,
+    )
+    const dialog = await screen.findByRole('dialog', { name: t('pageProperty.propertiesButton') })
+    await within(dialog).findByLabelText(t('pageProperty.valueLabel', { key: 'status' }))
+    expect(dialog).toHaveFocus()
+
+    rerender(
+      <>
+        <button type="button">chip</button>
+        <PagePropertyTable pageId="PAGE_1" open={false} onOpenChange={noop} />
+      </>,
+    )
+    await waitFor(() => expect(opener).toHaveFocus())
+  })
+
+  // ⋮ › Properties… opens it from a menu row that is gone by the time it closes.
+  it('returns focus to returnFocusRef when what opened it is gone', async () => {
+    setupMock([], [])
+    const kebab = { current: null as HTMLButtonElement | null }
+    const Harness = ({ open, row }: { open: boolean; row: boolean }) => (
+      <>
+        <button type="button" ref={kebab}>
+          kebab
+        </button>
+        {row && <button type="button">row</button>}
+        <PagePropertyTable pageId="PAGE_1" open={open} onOpenChange={noop} returnFocusRef={kebab} />
+      </>
+    )
+    const { rerender } = render(<Harness open={false} row />)
+    screen.getByRole('button', { name: 'row' }).focus()
+    rerender(<Harness open row />)
+    await screen.findByRole('dialog', { name: t('pageProperty.propertiesButton') })
+    rerender(<Harness open row={false} />)
+
+    rerender(<Harness open={false} row={false} />)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'kebab' })).toHaveFocus())
   })
 
   it('shows loading skeletons while data loads', async () => {
@@ -240,36 +297,19 @@ describe('PagePropertyTable rendering', () => {
       list_property_defs: () => new Promise<never>(() => {}),
     })
 
-    const { container } = render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
-    await waitFor(() => {
-      expect(screen.getByTestId('property-loading')).toBeInTheDocument()
-      expect(container.querySelector('[aria-busy="true"]')).toBeInTheDocument()
-    })
-  })
-
-  it('renders property count in toggle label', async () => {
-    setupMock(
-      [makeProp('status', { value_text: 'active' }), makeProp('priority', { value_num: 1 })],
-      [makeDef('status', 'text'), makeDef('priority', 'number')],
-    )
-
-    render(<PagePropertyTable pageId="PAGE_1" />)
-
-    await waitFor(() => {
-      const toggle = screen.getByRole('button', { name: `${t('pageProperty.propertiesButton')} 2` })
-      expect(within(toggle).getByText('2')).toHaveAttribute('data-variant', 'metadata')
-    })
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByTestId('property-loading')).toBeInTheDocument()
+    expect(dialog.querySelector('[aria-busy="true"]')).toBeInTheDocument()
   })
 })
 
 describe('PagePropertyTable property display', () => {
   it('text property renders as text input with correct value', async () => {
-    const user = userEvent.setup()
     setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /Properties/ }))
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
     await waitFor(() => {
       const input = screen.getByLabelText(
@@ -282,11 +322,9 @@ describe('PagePropertyTable property display', () => {
   })
 
   it('number property renders as number input', async () => {
-    const user = userEvent.setup()
     setupMock([makeProp('priority', { value_num: 42 })], [makeDef('priority', 'number')])
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /Properties/ }))
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
     await waitFor(() => {
       const input = screen.getByLabelText(
@@ -298,11 +336,9 @@ describe('PagePropertyTable property display', () => {
   })
 
   it('date property renders as date input', async () => {
-    const user = userEvent.setup()
     setupMock([makeProp('due', { value_date: '2026-06-15' })], [makeDef('due', 'date')])
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /Properties/ }))
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
     await waitFor(() => {
       const input = screen.getByLabelText(
@@ -314,14 +350,12 @@ describe('PagePropertyTable property display', () => {
   })
 
   it('select property renders as dropdown with options', async () => {
-    const user = userEvent.setup()
     setupMock(
       [makeProp('stage', { value_text: 'DOING' })],
       [makeDef('stage', 'select', '["TODO","DOING","DONE"]')],
     )
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /Properties/ }))
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
     await waitFor(() => {
       const select = screen.getByLabelText(
@@ -343,8 +377,7 @@ describe('PagePropertyTable property editing', () => {
     const user = userEvent.setup()
     setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /Properties/ }))
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
     await waitFor(() => {
       expect(
@@ -378,8 +411,7 @@ describe('PagePropertyTable property editing', () => {
     const user = userEvent.setup()
     setupMock([makeProp('priority', { value_num: 1 })], [makeDef('priority', 'number')])
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /Properties/ }))
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
     await waitFor(() => {
       expect(
@@ -416,8 +448,7 @@ describe('PagePropertyTable property editing', () => {
       [makeDef('stage', 'select', '["TODO","DOING","DONE"]')],
     )
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /Properties/ }))
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
     await waitFor(() => {
       expect(
@@ -449,8 +480,7 @@ describe('PagePropertyTable property editing', () => {
     const user = userEvent.setup()
     setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /Properties/ }))
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
     await waitFor(() => {
       expect(
@@ -482,8 +512,7 @@ describe('PagePropertyTable property editing', () => {
     const user = userEvent.setup()
     setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /Properties/ }))
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
     await user.click(
       await screen.findByLabelText(t('pageProperty.deletePropertyLabel', { key: 'author' })),
     )
@@ -493,7 +522,6 @@ describe('PagePropertyTable property editing', () => {
   })
 
   it('hides delete button for non-deletable builtin properties', async () => {
-    const user = userEvent.setup()
     setupMock(
       [
         makeProp('created_at', { value_text: '2026-01-01' }),
@@ -502,8 +530,7 @@ describe('PagePropertyTable property editing', () => {
       [makeDef('author', 'text')],
     )
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /Properties/ }))
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
     await waitFor(() => {
       expect(
@@ -526,7 +553,8 @@ describe('PagePropertyTable add property flow', () => {
   it('"Add property" opens popover with definition list', async () => {
     setupMock([], [makeDef('status', 'text'), makeDef('weight', 'number')])
 
-    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
+    await openAddPicker()
 
     await waitFor(() => {
       expect(screen.getByLabelText(t('pageProperty.pickerLabel'))).toBeInTheDocument()
@@ -539,7 +567,8 @@ describe('PagePropertyTable add property flow', () => {
     const user = userEvent.setup()
     setupMock([], [makeDef('status', 'text'), makeDef('priority', 'number')])
 
-    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
+    await openAddPicker()
 
     await waitFor(() => {
       expect(screen.getByLabelText(t('pageProperty.searchLabel'))).toBeInTheDocument()
@@ -561,7 +590,8 @@ describe('PagePropertyTable add property flow', () => {
     const user = userEvent.setup()
     setupMock([], [makeDef('status', 'text')])
 
-    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
+    await openAddPicker()
 
     await waitFor(() => {
       expect(screen.getByText('Status')).toBeInTheDocument()
@@ -581,7 +611,8 @@ describe('PagePropertyTable add property flow', () => {
     const user = userEvent.setup()
     setupMock([], [makeDef('weight', 'number')])
 
-    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
+    await openAddPicker()
 
     await waitFor(() => {
       expect(screen.getByText('Weight')).toBeInTheDocument()
@@ -608,7 +639,8 @@ describe('PagePropertyTable add property flow', () => {
     const user = userEvent.setup()
     setupMock([], [makeDef('deadline', 'date')])
 
-    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
+    await openAddPicker()
 
     await waitFor(() => {
       expect(screen.getByText('Deadline')).toBeInTheDocument()
@@ -664,7 +696,8 @@ describe('PagePropertyTable add property flow', () => {
       set_property: () => setPropertyResult,
     })
 
-    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
+    await openAddPicker()
 
     await waitFor(() => {
       expect(screen.getByLabelText(t('pageProperty.searchLabel'))).toBeInTheDocument()
@@ -724,7 +757,8 @@ describe('PagePropertyTable add property flow', () => {
       set_property: () => setPropertyResult,
     })
 
-    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
+    await openAddPicker()
 
     await waitFor(() => {
       expect(screen.getByLabelText(t('pageProperty.searchLabel'))).toBeInTheDocument()
@@ -764,7 +798,8 @@ describe('PagePropertyTable add property flow', () => {
       list_property_defs: () => defsPage([...defs]),
     })
 
-    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
+    await openAddPicker()
 
     await waitFor(() => {
       expect(screen.getByLabelText(t('pageProperty.searchLabel'))).toBeInTheDocument()
@@ -789,7 +824,8 @@ describe('PagePropertyTable add property flow', () => {
   it('displays formatted property names in the add-property popover', async () => {
     setupMock([], [makeDef('reviewed_at', 'date'), makeDef('my_custom_prop', 'text')])
 
-    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
+    await openAddPicker()
 
     await waitFor(() => {
       expect(screen.getByText('Reviewed At')).toBeInTheDocument()
@@ -806,7 +842,7 @@ describe('PagePropertyTable error handling', () => {
     const fail = () => Promise.reject(new Error('backend error'))
     stubInvoke({ get_properties: fail, list_property_defs: fail })
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith(t('pageProperty.loadFailed'))
@@ -817,16 +853,14 @@ describe('PagePropertyTable error handling', () => {
     // get_properties succeeds, list_property_defs rejects — the table should
     // still render the property row from the successful side and surface the
     // defs failure via reportIpcError instead of failing the whole load.
-    const user = userEvent.setup()
     stubInvoke({
       get_properties: () => [makeProp('author', { value_text: 'Alice' })],
       list_property_defs: () => Promise.reject(new Error('defs IPC failed')),
     })
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
-    // (a) The successful side renders. Expand to see the property row.
-    await user.click(await screen.findByRole('button', { name: /Properties/ }))
+    // (a) The successful side renders.
     await waitFor(() => {
       expect(
         screen.getByLabelText(t('pageProperty.valueLabel', { key: 'author' })),
@@ -860,8 +894,7 @@ describe('PagePropertyTable error handling', () => {
       set_property: () => Promise.reject(new Error('save failed')),
     })
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /Properties/ }))
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
     await waitFor(() => {
       expect(
@@ -891,8 +924,7 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
       delete_property: () => Promise.reject(new Error('backend delete error')),
     })
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /Properties/ }))
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
     await waitFor(() => {
       expect(
@@ -926,7 +958,8 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
       set_property: () => Promise.reject(new Error('backend set error')),
     })
 
-    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
+    await openAddPicker()
 
     await waitFor(() => {
       expect(screen.getByText('Weight')).toBeInTheDocument()
@@ -957,7 +990,8 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
       },
     })
 
-    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
+    await openAddPicker()
 
     await waitFor(() => {
       expect(screen.getByText('Weight')).toBeInTheDocument()
@@ -998,7 +1032,8 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
       },
     })
 
-    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
+    await openAddPicker()
 
     await waitFor(() => {
       expect(screen.getByLabelText(t('pageProperty.searchLabel'))).toBeInTheDocument()
@@ -1037,7 +1072,8 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
       create_property_def: () => Promise.reject(new Error('ipc channel closed')),
     })
 
-    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
+    await openAddPicker()
 
     await waitFor(() => {
       expect(screen.getByLabelText(t('pageProperty.searchLabel'))).toBeInTheDocument()
@@ -1073,7 +1109,8 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
       },
     })
 
-    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
+    await openAddPicker()
 
     await waitFor(() => {
       expect(screen.getByLabelText(t('pageProperty.searchLabel'))).toBeInTheDocument()
@@ -1125,7 +1162,8 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
       },
     })
 
-    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
+    await openAddPicker()
 
     await waitFor(() => {
       expect(screen.getByLabelText(t('pageProperty.searchLabel'))).toBeInTheDocument()
@@ -1158,7 +1196,7 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
     const fail = () => Promise.reject(new Error('total failure'))
     stubInvoke({ get_properties: fail, list_property_defs: fail })
 
-    const { container } = render(<PagePropertyTable pageId="PAGE_1" />)
+    const { container } = render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith(t('pageProperty.loadFailed'))
@@ -1170,26 +1208,10 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
 })
 
 describe('PagePropertyTable accessibility', () => {
-  it('collapsed state has no a11y violations', async () => {
+  it('the open dialog has no a11y violations', async () => {
     setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
 
-    const { container } = render(<PagePropertyTable pageId="PAGE_1" />)
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Properties/ })).toBeInTheDocument()
-    })
-
-    const results = await axe(container)
-    expect(results).toHaveNoViolations()
-  })
-
-  it('expanded state has no a11y violations', async () => {
-    const user = userEvent.setup()
-    setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
-
-    const { container } = render(<PagePropertyTable pageId="PAGE_1" />)
-
-    await user.click(screen.getByRole('button', { name: /Properties/ }))
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
     await waitFor(() => {
       expect(
@@ -1198,7 +1220,7 @@ describe('PagePropertyTable accessibility', () => {
     })
 
     await waitFor(async () => {
-      const results = await axe(container)
+      const results = await axe(screen.getByRole('dialog'))
       expect(results).toHaveNoViolations()
     })
   })
@@ -1206,11 +1228,9 @@ describe('PagePropertyTable accessibility', () => {
 
 describe('PagePropertyTable validation and confirmation', () => {
   it('shows error toast when invalid number is entered', async () => {
-    const user = userEvent.setup()
     setupMock([makeProp('priority', { value_num: 1 })], [makeDef('priority', 'number')])
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /Properties/ }))
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
     await waitFor(() => {
       expect(
@@ -1240,8 +1260,7 @@ describe('PagePropertyTable validation and confirmation', () => {
     const user = userEvent.setup()
     setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /Properties/ }))
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
     await waitFor(() => {
       expect(
@@ -1267,8 +1286,7 @@ describe('PagePropertyTable validation and confirmation', () => {
     const user = userEvent.setup()
     setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /Properties/ }))
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
     await waitFor(() => {
       expect(
@@ -1301,14 +1319,12 @@ describe('PagePropertyTable validation and confirmation', () => {
 
 describe('PagePropertyTable edit select options', () => {
   it('shows edit options (pencil) button for select properties', async () => {
-    const user = userEvent.setup()
     setupMock(
       [makeProp('stage', { value_text: 'TODO' })],
       [makeDef('stage', 'select', '["TODO","DOING","DONE"]')],
     )
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /Properties/ }))
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
     await waitFor(() => {
       expect(
@@ -1318,11 +1334,9 @@ describe('PagePropertyTable edit select options', () => {
   })
 
   it('does not show edit options button for non-select properties', async () => {
-    const user = userEvent.setup()
     setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /Properties/ }))
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
     await waitFor(() => {
       expect(
@@ -1339,8 +1353,7 @@ describe('PagePropertyTable edit select options', () => {
       [makeDef('stage', 'select', '["TODO","DOING","DONE"]')],
     )
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /Properties/ }))
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
     await waitFor(() => {
       expect(
@@ -1372,8 +1385,7 @@ describe('PagePropertyTable edit select options', () => {
       [makeDef('stage', 'select', '["TODO","DOING"]')],
     )
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /Properties/ }))
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
     await waitFor(() => {
       expect(
@@ -1409,8 +1421,7 @@ describe('PagePropertyTable edit select options', () => {
       [makeDef('stage', 'select', '["TODO","DOING","DONE"]')],
     )
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /Properties/ }))
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
     await waitFor(() => {
       expect(
@@ -1451,8 +1462,7 @@ describe('PagePropertyTable edit select options', () => {
       update_property_def_options: () => Promise.reject(new Error('backend error')),
     })
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /Properties/ }))
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
 
     await waitFor(() => {
       expect(
@@ -1488,7 +1498,8 @@ describe('PagePropertyTable task-only property filtering', () => {
       ],
     )
 
-    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
+    await openAddPicker()
 
     await waitFor(() => {
       expect(screen.getByLabelText(t('pageProperty.pickerLabel'))).toBeInTheDocument()
@@ -1508,7 +1519,8 @@ describe('PagePropertyTable task-only property filtering', () => {
   it('shows ref-type properties in add-property options', async () => {
     setupMock([], [makeDef('linked_page', 'ref'), makeDef('notes', 'text')])
 
-    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
+    await openAddPicker()
 
     await waitFor(() => {
       expect(screen.getByLabelText(t('pageProperty.pickerLabel'))).toBeInTheDocument()
@@ -1524,7 +1536,8 @@ describe('PagePropertyTable task-only property filtering', () => {
     const user = userEvent.setup()
     setupMock([], [makeDef('linked_page', 'ref')])
 
-    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
+    await openAddPicker()
 
     await waitFor(() => {
       expect(screen.getByText('Linked Page')).toBeInTheDocument()
@@ -1538,43 +1551,6 @@ describe('PagePropertyTable task-only property filtering', () => {
       }),
     ).toBeInTheDocument()
     expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
-  })
-})
-
-describe('PagePropertyTable forceExpanded', () => {
-  it('renders and auto-expands when forceExpanded is true', async () => {
-    setupMock([], [makeDef('status', 'text')])
-
-    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
-
-    // Should render even with no properties
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Properties/ })).toBeInTheDocument()
-    })
-
-    // Should auto-expand and open add-property popover
-    await waitFor(() => {
-      expect(screen.getByLabelText(t('pageProperty.pickerLabel'))).toBeInTheDocument()
-    })
-  })
-
-  it('does not render when no properties and forceExpanded is false', async () => {
-    setupMock()
-    render(<PagePropertyTable pageId="PAGE_1" />)
-
-    // Wait for loading to finish before asserting absence
-    await waitFor(() => {
-      expect(screen.queryByRole('button', { name: /Properties/ })).not.toBeInTheDocument()
-    })
-  })
-
-  it('renders when properties exist without forceExpanded', async () => {
-    setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
-    render(<PagePropertyTable pageId="PAGE_1" />)
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Properties/ })).toBeInTheDocument()
-    })
   })
 })
 
@@ -1601,7 +1577,8 @@ describe('PagePropertyTable removing the repeat rule against the real tauri-mock
   it('offers delete for the rule and its limit, not the occurrence count, and the rule takes both', async () => {
     const user = userEvent.setup()
     const deleteLabel = (key: string) => t('pageProperty.deletePropertyLabel', { key })
-    const { container } = render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    const { container } = render(<PagePropertyTable pageId={PAGE_ID} open onOpenChange={noop} />)
+    await openAddPicker()
 
     const removeRule = await screen.findByLabelText(deleteLabel('repeat'))
     expect(screen.getByLabelText(deleteLabel('repeat-count'))).toBeInTheDocument()
@@ -1644,7 +1621,8 @@ describe('PagePropertyTable add-from-definition against the real tauri-mock (#27
   it('text add-from-def creates an editable draft WITHOUT an empty set_property', async () => {
     const user = userEvent.setup()
     // `context` is a seeded text-typed property definition (see tauri-mock/seed.ts).
-    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    render(<PagePropertyTable pageId={PAGE_ID} open onOpenChange={noop} />)
+    await openAddPicker()
 
     await waitFor(() => {
       expect(screen.getByText('Context')).toBeInTheDocument()
@@ -1675,7 +1653,8 @@ describe('PagePropertyTable add-from-definition against the real tauri-mock (#27
       options: null,
       multiple: true,
     })
-    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    render(<PagePropertyTable pageId={PAGE_ID} open onOpenChange={noop} />)
+    await openAddPicker()
 
     await user.click(await screen.findByText('Scores'))
 
@@ -1691,7 +1670,8 @@ describe('PagePropertyTable add-from-definition against the real tauri-mock (#27
 
   it('persists a non-empty text draft save via the real mock', async () => {
     const user = userEvent.setup()
-    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    render(<PagePropertyTable pageId={PAGE_ID} open onOpenChange={noop} />)
+    await openAddPicker()
 
     await waitFor(() => {
       expect(screen.getByText('Context')).toBeInTheDocument()
@@ -1719,7 +1699,8 @@ describe('PagePropertyTable add-from-definition against the real tauri-mock (#27
 
   it('drops an empty text draft on blur without any set_property call', async () => {
     const user = userEvent.setup()
-    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    render(<PagePropertyTable pageId={PAGE_ID} open onOpenChange={noop} />)
+    await openAddPicker()
 
     await waitFor(() => {
       expect(screen.getByText('Context')).toBeInTheDocument()
@@ -1742,7 +1723,8 @@ describe('PagePropertyTable add-from-definition against the real tauri-mock (#27
   it('select add-from-def creates a draft; picking a valid option persists via the real mock', async () => {
     const user = userEvent.setup()
     // `project` is a seeded select-typed def with options alpha/beta/gamma.
-    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    render(<PagePropertyTable pageId={PAGE_ID} open onOpenChange={noop} />)
+    await openAddPicker()
 
     await waitFor(() => {
       expect(screen.getByText('Project')).toBeInTheDocument()
@@ -1788,7 +1770,8 @@ describe('PagePropertyTable add-from-definition against the real tauri-mock (#27
       builtin: false,
     })
 
-    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    render(<PagePropertyTable pageId={PAGE_ID} open onOpenChange={noop} />)
+    await openAddPicker()
 
     await waitFor(() => {
       expect(screen.getByText('Weight')).toBeInTheDocument()
@@ -1853,7 +1836,8 @@ describe('PagePropertyTable create-def flow against the real tauri-mock (#2804)'
 
   it('creates a text def and adds a draft row WITHOUT an empty set_property', async () => {
     const user = userEvent.setup()
-    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    render(<PagePropertyTable pageId={PAGE_ID} open onOpenChange={noop} />)
+    await openAddPicker()
 
     await createTextDef(user, 'newfield')
 
@@ -1883,7 +1867,8 @@ describe('PagePropertyTable create-def flow against the real tauri-mock (#2804)'
 
   it('persists a non-empty draft save after create-def, persisting both the def and the value', async () => {
     const user = userEvent.setup()
-    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    render(<PagePropertyTable pageId={PAGE_ID} open onOpenChange={noop} />)
+    await openAddPicker()
 
     await createTextDef(user, 'newfield')
 
@@ -1913,7 +1898,8 @@ describe('PagePropertyTable create-def flow against the real tauri-mock (#2804)'
 
   it('drops an empty draft on blur after create-def without any set_property call', async () => {
     const user = userEvent.setup()
-    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    render(<PagePropertyTable pageId={PAGE_ID} open onOpenChange={noop} />)
+    await openAddPicker()
 
     await createTextDef(user, 'newfield')
 
@@ -1937,7 +1923,8 @@ describe('PagePropertyTable create-def flow against the real tauri-mock (#2804)'
   // during handleCreateDef` above), a list of numbers opens a draft row.
   it('creates a number def that holds several values and writes no value for it', async () => {
     const user = userEvent.setup()
-    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    render(<PagePropertyTable pageId={PAGE_ID} open onOpenChange={noop} />)
+    await openAddPicker()
 
     await user.type(await screen.findByLabelText(t('pageProperty.searchLabel')), 'scores')
     await user.click(await screen.findByText(/Create "scores"/))
@@ -1962,7 +1949,8 @@ describe('PagePropertyTable create-def flow against the real tauri-mock (#2804)'
   // #5449 — the backend refuses a select definition without options.
   it('creates a select def only with its options, then saves one of them', async () => {
     const user = userEvent.setup()
-    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    render(<PagePropertyTable pageId={PAGE_ID} open onOpenChange={noop} />)
+    await openAddPicker()
 
     await user.type(await screen.findByLabelText(t('pageProperty.searchLabel')), 'size')
     await user.click(await screen.findByText(/Create "size"/))
@@ -2006,7 +1994,8 @@ describe('PagePropertyTable refetch on property changes made elsewhere (#5287)',
   it('shows the value a page-level undo restored', async () => {
     const user = userEvent.setup()
     properties.set(PAGE_ID, new Map([['context', makeProp('context', { value_text: 'draft' })]]))
-    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    render(<PagePropertyTable pageId={PAGE_ID} open onOpenChange={noop} />)
+    await openAddPicker()
 
     const input = await screen.findByLabelText(valueLabel('context'))
     expect(input).toHaveValue('draft')
@@ -2029,7 +2018,8 @@ describe('PagePropertyTable refetch on property changes made elsewhere (#5287)',
 
   it('shows a property written behind it and keeps an unsaved draft row', async () => {
     const user = userEvent.setup()
-    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    render(<PagePropertyTable pageId={PAGE_ID} open onOpenChange={noop} />)
+    await openAddPicker()
 
     await user.click(await screen.findByText('Context'))
     expect(await screen.findByLabelText(valueLabel('context'))).toBeInTheDocument()
@@ -2067,7 +2057,8 @@ describe('PagePropertyTable refetch on property changes made elsewhere (#5287)',
       multiple: null,
     })
     properties.set(PAGE_ID, new Map([['phase', makeProp('phase', { value_text: 'alpha' })]]))
-    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    render(<PagePropertyTable pageId={PAGE_ID} open onOpenChange={noop} />)
+    await openAddPicker()
     const optionsOf = () =>
       Array.from((screen.getByLabelText(valueLabel('phase')) as HTMLSelectElement).options).map(
         (o) => o.value,
@@ -2094,12 +2085,14 @@ describe('PagePropertyTable refetch on property changes made elsewhere (#5287)',
     const OTHER = SEED_IDS.PAGE_PROJECTS
     properties.set(OTHER, new Map([['reviewer', makeProp('reviewer', { value_text: 'x' })]]))
     const user = userEvent.setup()
-    const { rerender } = render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    const { rerender } = render(<PagePropertyTable pageId={PAGE_ID} open onOpenChange={noop} />)
+    await openAddPicker()
 
     await user.click(await screen.findByText('Context'))
     expect(await screen.findByLabelText(valueLabel('context'))).toBeInTheDocument()
 
-    rerender(<PagePropertyTable pageId={OTHER} forceExpanded />)
+    rerender(<PagePropertyTable pageId={OTHER} open onOpenChange={noop} />)
+    await openAddPicker()
     await waitFor(() => {
       expect(screen.getByLabelText(valueLabel('reviewer'))).toHaveValue('x')
     })
@@ -2110,14 +2103,17 @@ describe('PagePropertyTable refetch on property changes made elsewhere (#5287)',
     const OTHER = SEED_IDS.PAGE_PROJECTS
     properties.set(OTHER, new Map([['reviewer', makeProp('reviewer', { value_text: 'x' })]]))
     const user = userEvent.setup()
-    const { rerender } = render(<PagePropertyTable pageId={OTHER} forceExpanded />)
+    const { rerender } = render(<PagePropertyTable pageId={OTHER} open onOpenChange={noop} />)
+    await openAddPicker()
     expect(await screen.findByLabelText(valueLabel('reviewer'))).toHaveValue('x')
 
-    rerender(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    rerender(<PagePropertyTable pageId={PAGE_ID} open onOpenChange={noop} />)
+    await openAddPicker()
     await user.click(await screen.findByText('Context'))
     expect(await screen.findByLabelText(valueLabel('context'))).toBeInTheDocument()
 
-    rerender(<PagePropertyTable pageId={OTHER} forceExpanded />)
+    rerender(<PagePropertyTable pageId={OTHER} open onOpenChange={noop} />)
+    await openAddPicker()
     expect(await screen.findByLabelText(valueLabel('reviewer'))).toHaveValue('x')
     expect(screen.queryByLabelText(valueLabel('context'))).not.toBeInTheDocument()
   })
@@ -2136,8 +2132,8 @@ describe('PagePropertyTable refetch on property changes made elsewhere (#5287)',
       }
       return dispatch(cmd, args)
     })
-    const { rerender } = render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
-    rerender(<PagePropertyTable pageId={OTHER} forceExpanded />)
+    const { rerender } = render(<PagePropertyTable pageId={PAGE_ID} open onOpenChange={noop} />)
+    rerender(<PagePropertyTable pageId={OTHER} open onOpenChange={noop} />)
     expect(await screen.findByLabelText(valueLabel('reviewer'))).toHaveValue('x')
 
     await act(async () => {
@@ -2169,7 +2165,8 @@ describe('PagePropertyTable removing a ref draft against the real tauri-mock (#5
 
   /** Render the table, add an `owner` ref draft and return its page picker. */
   async function addOwnerDraft(user: ReturnType<typeof userEvent.setup>) {
-    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    render(<PagePropertyTable pageId={PAGE_ID} open onOpenChange={noop} />)
+    await openAddPicker()
     await user.click(await screen.findByText('Owner'))
     return screen.findByRole('button', { name: valueLabel('owner') })
   }
@@ -2245,7 +2242,8 @@ describe('PagePropertyTable renames a select option (#5841 S4)', () => {
   }
 
   it("shows the new name on the page's value and in the definition's options", async () => {
-    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    render(<PagePropertyTable pageId={PAGE_ID} open onOpenChange={noop} />)
+    await openAddPicker()
     await waitFor(() => {
       expect(screen.getByLabelText(valueLabel)).toHaveValue('alpha')
     })
@@ -2261,7 +2259,8 @@ describe('PagePropertyTable renames a select option (#5841 S4)', () => {
   })
 
   it("the toast's Undo puts the old name back on the page and in the options", async () => {
-    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    render(<PagePropertyTable pageId={PAGE_ID} open onOpenChange={noop} />)
+    await openAddPicker()
     await renameFromTable('alpha', 'apollo')
     await waitFor(() => {
       expect(screen.getByLabelText(valueLabel)).toHaveValue('apollo')
@@ -2292,7 +2291,7 @@ describe('PagePropertyTable renames a select option (#5841 S4)', () => {
     useUndoStore.getState().clearPage(PAGE_ID)
     render(
       <PageBlockStoreProvider pageId={PAGE_ID}>
-        <PagePropertyTable pageId={PAGE_ID} forceExpanded />
+        <PagePropertyTable pageId={PAGE_ID} open onOpenChange={noop} />
       </PageBlockStoreProvider>,
     )
     await waitFor(() => {
@@ -2331,7 +2330,8 @@ describe('PagePropertyTable renames a select option (#5841 S4)', () => {
     mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) =>
       cmd === 'rename_property_option' ? Promise.reject(refusal) : dispatch(cmd, args),
     )
-    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    render(<PagePropertyTable pageId={PAGE_ID} open onOpenChange={noop} />)
+    await openAddPicker()
     await renameFromTable('alpha', 'apollo')
 
     await waitFor(() => {
@@ -2367,7 +2367,8 @@ describe("PagePropertyTable values that don't fit against the real tauri-mock (#
 
   it('marks the value outside the options, and choosing an option makes it fit', async () => {
     const user = userEvent.setup()
-    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    render(<PagePropertyTable pageId={PAGE_ID} open onOpenChange={noop} />)
+    await openAddPicker()
 
     const select = (await screen.findByLabelText(
       t('pageProperty.valueLabel', { key: 'project' }),
@@ -2391,7 +2392,8 @@ describe("PagePropertyTable values that don't fit against the real tauri-mock (#
   })
 
   it('has no a11y violations with a marked row', async () => {
-    const { container } = render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    const { container } = render(<PagePropertyTable pageId={PAGE_ID} open onOpenChange={noop} />)
+    await openAddPicker()
 
     expect(
       await screen.findByLabelText(t('pageProperty.valueLabel', { key: 'project' })),
@@ -2415,7 +2417,8 @@ describe('PagePropertyTable offers the user-set built-ins', () => {
       ],
     )
 
-    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+    render(<PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />)
+    await openAddPicker()
 
     expect(await screen.findByText('Meeting Date')).toBeInTheDocument()
     expect(screen.queryByText('Repeat Until')).not.toBeInTheDocument()
@@ -2444,7 +2447,8 @@ describe('PagePropertyTable list property against the real tauri-mock', () => {
 
   it('adds a date list as a draft, then writes its items and removes one', async () => {
     const user = userEvent.setup()
-    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    render(<PagePropertyTable pageId={PAGE_ID} open onOpenChange={noop} />)
+    await openAddPicker()
     await user.click(await screen.findByText('When'))
     expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
 

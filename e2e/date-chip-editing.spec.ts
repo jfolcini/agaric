@@ -22,8 +22,8 @@ import {
  *     a natural-language input parsed by `parseDate` (`src/lib/parse-date.ts`),
  *     Enter applies the parsed date, Escape closes the popover unchanged.
  *   - The journal Due panel's task rows carry the same chip (#7040): a date
- *     set on an Overdue or Scheduled earlier row moves the task into the
- *     day's list.
+ *     set on an Overdue row, due or scheduled, moves the task to the Today
+ *     tab (#7155 R7).
  *   - The toolbar Date menu's "Set scheduled date" opens `BlockDatePicker`; a calendar
  *     day becomes the block's scheduled date.
  *
@@ -127,7 +127,7 @@ async function leaveAndReturnToJournal(page: Page): Promise<void> {
 
 test.describe('Due panel row date chips @editor @journal', () => {
   test.beforeEach(async ({ page }) => {
-    // Overdue: due yesterday. Scheduled earlier: scheduled two days ago, no due date.
+    // Both overdue: one due yesterday, one scheduled two days ago with no due date.
     await ipc(page, 'set_due_date', { blockId: SEED_IDS.BLOCK_OVERDUE_1, date: '2026-03-10' })
     await ipc(page, 'set_due_date', { blockId: SEED_IDS.BLOCK_PROJ_4, date: null })
     await ipc(page, 'set_scheduled_date', { blockId: SEED_IDS.BLOCK_PROJ_4, date: '2026-03-09' })
@@ -136,27 +136,25 @@ test.describe('Due panel row date chips @editor @journal', () => {
     await leaveAndReturnToJournal(page)
   })
 
-  for (const { section, task, before, after } of [
-    { section: 'Overdue', task: 'Submit report', before: 'Due Mar 10', after: 'Due Mar 11' },
-    {
-      section: 'Scheduled earlier',
-      task: 'Design new dashboard',
-      before: 'Scheduled Mar 9',
-      after: 'Scheduled Mar 11',
-    },
+  for (const { task, before, after } of [
+    { task: 'Submit report', before: 'Due Mar 10', after: 'Due Mar 11' },
+    { task: 'Design new dashboard', before: 'Scheduled Mar 9', after: 'Scheduled Mar 11' },
   ]) {
-    test(`${section} row: "today" on its chip moves the task into the day's list and it persists`, async ({
+    test(`an Overdue row's "${before}" chip set to "today" moves the task to the Today tab and it persists`, async ({
       page,
     }) => {
       const panel = page.getByTestId('due-panel')
-      const alertRow = panel.getByTestId('due-panel-alert-item').filter({ hasText: task })
-      const dayRowChip = panel
-        .getByTestId('due-panel-item')
-        .filter({ hasText: task })
-        .getByRole('button', { name: after, exact: true })
-      await expect(panel.getByRole('heading', { name: new RegExp(`^${section} `) })).toBeVisible()
+      const row = panel.getByTestId('due-panel-item').filter({ hasText: task })
+      const showTab = async (name: string) => {
+        await panel.getByRole('tab', { name: new RegExp(`^${name}`) }).click()
+        await expect(panel.getByRole('tab', { name: new RegExp(`^${name}`) })).toHaveAttribute(
+          'aria-selected',
+          'true',
+        )
+      }
 
-      await alertRow.getByRole('button', { name: before, exact: true }).click()
+      await showTab('Overdue')
+      await row.getByRole('button', { name: before, exact: true }).click()
       const popover = activePopover(page)
       const field = popover.getByRole('textbox', { name: 'Type a date' })
       await expect(field).toBeFocused()
@@ -164,13 +162,15 @@ test.describe('Due panel row date chips @editor @journal', () => {
       await expect(popover.locator('strong')).toHaveText('2026-03-11')
       await page.keyboard.press('Enter')
       await expect(popover).toBeHidden()
+      await expect(row).toHaveCount(0)
 
-      await expect(dayRowChip).toBeVisible()
-      await expect(alertRow).toHaveCount(0)
-
-      await leaveAndReturnToJournal(page)
-      await expect(dayRowChip).toBeVisible()
-      await expect(alertRow).toHaveCount(0)
+      for (const pass of ['now', 'after a remount']) {
+        if (pass !== 'now') await leaveAndReturnToJournal(page)
+        await showTab('Today')
+        await expect(row.getByRole('button', { name: after, exact: true })).toBeVisible()
+        await showTab('Overdue')
+        await expect(row).toHaveCount(0)
+      }
     })
   }
 })

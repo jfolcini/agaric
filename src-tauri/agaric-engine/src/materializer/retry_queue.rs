@@ -637,6 +637,12 @@ pub async fn record_failure(
     };
     metrics.note_persistent_enqueue(persist_class, row.attempts, class);
 
+    // A shed's persist is counted in its episode's one summary line
+    // (`Materializer::check_queue_pressure`), so it stays off the warn log.
+    if last_error == SHED_LAST_ERROR {
+        tracing::debug!(%block_id, task_kind = kind_str, "persisted shed task to retry queue");
+        return Ok(());
+    }
     tracing::warn!(
         block_id = %block_id,
         task_kind = kind_str,
