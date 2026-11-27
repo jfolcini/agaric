@@ -12,25 +12,27 @@ Round 3 of the UI review, lane B. A first attempt was lost before it pushed. Thi
 
 **U4: switches and segmented toggles**
 
-- `Switch` on touch is 24 × 44 px with `touch-hit-area`; on desktop it stays 20 × 36 px. The on track is `bg-brand` and the off track stays `bg-muted-foreground/40`. The thumb is white in every theme and state. A theme token would turn dark under a dark theme.
+- `Switch` on touch is 24 × 44 px with `touch-hit-area`; on desktop it stays 20 × 36 px. The on track is `bg-brand`; the off track stays `bg-muted-foreground/40` in light and is `/12` in the dark themes (see Contrast). The thumb is white in every theme and state. A theme token would turn dark under a dark theme.
 - Premise check: the Tasks & reminders and bug-report switches were already centred by `ToggleRow`'s `items-center`. But each sat 2 px high, because an `inline-flex` switch in a block wrapper leaves room for a descender under it. `ToggleRow` renders the switch `flex`.
 - `MirrorSection`'s four switch rows used a bare `SettingRow`, which stacks into a column below `sm`. They now go through `ToggleRow`, which gains an optional `description` and a `ref` for the mass-change focus return.
 - `ToggleGroup` on a phone filled its row with `flex grow`. In a flex column that also stretched it down: 367 px in the search sheet's All pages mode. It keeps `grow` and adds `max-h-fit`, which stops the stretch down a column and does nothing in a row. Lane C's reviewer tested this in place of the brief's `w-full` idea, which would shrink a row's siblings. Its heights were already 36 px on touch at every size. On desktop the default and `sm` sizes match the buttons beside them (32 px, 28 px), so they were left alone.
 
-**Contrast** (WCAG, OKLCH tokens from `src/index.css`; off track = `--muted-foreground` at 40 % over the surface)
+**Contrast** (WCAG, OKLCH tokens from `src/index.css`, composited in sRGB; page / card / popover where they differ)
 
-| Theme | on vs off track | on vs surface (page / card / popover) | thumb (white) on on | thumb on off |
-|---|---|---|---|---|
-| Light | 3.32 | 5.90 | 6.07 | 1.83 |
-| Dark | 2.69 / 2.44 / 2.26 | 5.92 / 5.35 / 4.83 | 3.12 | 8.38 / 7.04 |
-| Solarized Light | 3.15 | 5.56 | 6.07 | 1.93 |
-| Solarized Dark | 2.67 / 2.39 / 2.39 | 5.49 / 4.77 / 4.77 | 3.12 | 8.34 / 7.47 |
-| Dracula | 2.09 / 1.91 / 1.91 | 4.69 / 4.08 / 4.08 | 3.12 | 6.53 / 5.96 |
-| One Dark Pro | 2.11 / 1.93 / 1.93 | 4.52 / 3.91 / 3.91 | 3.12 | 6.59 / 6.01 |
+The off track is `--muted-foreground` at 40 % in the light themes. At 40 % the dark themes' lighter grey left the coral under 3:1 against it (1.90 to 2.68), so under `.dark` it is 12 %.
 
-- `--brand` clears 3:1 against every surface in every theme.
-- It fails 3:1 against the off track in every dark theme (1.91 to 2.69). The thumb's position still marks the state.
-- The white thumb fails 3:1 on the light off track (1.83), as it did before. Its shadow outlines it.
+| Theme | off track | on vs off | white thumb on off | off vs surface | on vs surface | white thumb on on |
+|---|---|---|---|---|---|---|
+| Light | muted-fg 40 % | 3.32 | 1.83 | 1.77 | 5.89 | 6.07 |
+| Solarized Light | muted-fg 40 % | 3.16 | 1.92 | 1.76 | 5.55 | 6.07 |
+| Dark | muted-fg 12 % | 4.94 / 4.32 / 3.90 | 15.42 / 13.49 / 12.18 | 1.20 / 1.23 / 1.24 | 5.93 / 5.32 / 4.83 | 3.12 |
+| Solarized Dark | muted-fg 12 % | 4.59 / 3.91 / 3.91 | 14.32 / 12.22 / 12.22 | 1.20 / 1.21 / 1.21 | 5.50 / 4.75 / 4.75 | 3.12 |
+| Dracula | muted-fg 12 % | 3.72 / 3.24 / 3.24 | 11.61 / 10.11 / 10.11 | 1.26 | 4.68 / 4.07 / 4.07 | 3.12 |
+| One Dark Pro | muted-fg 12 % | 3.61 / 3.15 / 3.15 | 11.29 / 9.83 / 9.83 | 1.25 / 1.24 / 1.24 | 4.50 / 3.90 / 3.90 | 3.12 |
+
+- On vs off clears 3:1 everywhere; the tightest is One Dark Pro on a card, 3.15.
+- In the dark themes the faint off track is 1.20 to 1.26 against its surface; the white thumb on it, 9.8:1 or more, is what marks the control.
+- The white thumb on the light off track is 1.83 (1.92 in Solarized Light), as before. Its shadow outlines it.
 
 **Tests**
 
@@ -38,6 +40,7 @@ Round 3 of the UI review, lane B. A first attempt was lost before it pushed. Thi
   - restoring the input's 44 px: 44 for 36;
   - the switch's old `h-7`: 28 for at most 24;
   - `bg-primary`: a dark track for `--brand`;
+  - dropping the dark 12 % off track: 0.4 alpha for 0.12;
   - the old thumb: not white;
   - `inline-flex` in `ToggleRow`: off centre by 2 px;
   - dropping `max-h-fit`: 367 for 36;

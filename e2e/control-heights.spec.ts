@@ -115,15 +115,17 @@ for (const profile of PROFILES) {
       expect(Math.abs(box.y + box.height / 2 - (rowBox.y + rowBox.height / 2))).toBeLessThan(1)
 
       const track = () => sw.evaluate((el) => getComputedStyle(el).backgroundColor)
-      const offGrey = () =>
-        page.evaluate(() => {
+      // The muted grey at 40 % in light, 12 % in the dark themes, where 40 % of
+      // their lighter grey left the coral under 3:1 against it.
+      const offGrey = (percent: number) =>
+        page.evaluate((p) => {
           const probe = document.createElement('div')
-          probe.className = 'bg-muted-foreground/40'
+          probe.style.backgroundColor = `color-mix(in oklab, var(--muted-foreground) ${p}%, transparent)`
           document.body.append(probe)
           const color = getComputedStyle(probe).backgroundColor
           probe.remove()
           return color
-        })
+        }, percent)
       const thumb = () =>
         sw
           .locator('[data-slot="switch-thumb"]')
@@ -133,7 +135,7 @@ for (const profile of PROFILES) {
         await page.evaluate((on) => document.documentElement.classList.toggle('dark', on), dark)
         const theme = dark ? 'dark' : 'light'
         await expect(sw).toHaveAttribute('aria-checked', 'false')
-        expect(await track(), `${theme} off track`).toBe(await offGrey())
+        expect(await track(), `${theme} off track`).toBe(await offGrey(dark ? 12 : 40))
         expect(await thumb(), `${theme} thumb on the off track`).toBe(white)
         await sw.click()
         await expect(sw).toHaveAttribute('aria-checked', 'true')

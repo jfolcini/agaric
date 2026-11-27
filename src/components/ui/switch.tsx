@@ -16,8 +16,9 @@ const Switch = ({
       'focus-ring-visible',
       'disabled:cursor-not-allowed disabled:opacity-50',
       // On is the brand coral in every theme; off a neutral grey that, unlike
-      // `bg-input`, still shows on a white page.
-      'data-[state=checked]:bg-brand data-[state=unchecked]:bg-muted-foreground/40',
+      // `bg-input`, still shows on a white page. The dark themes' lighter grey
+      // takes a fainter tint, or the coral would not clear 3:1 against it.
+      'data-[state=checked]:bg-brand data-[state=unchecked]:bg-muted-foreground/40 dark:data-[state=unchecked]:bg-muted-foreground/12',
       // Compact beside 36 px controls; the 44 px target is invisible.
       'coarse:h-6 coarse:w-11 touch-hit-area',
       className,
