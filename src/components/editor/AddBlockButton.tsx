@@ -33,9 +33,9 @@ export function AddBlockButton({
       variant="ghost"
       size="sm"
       // The block rows hang their leading controls left of the column
-      // (`BlockListRenderer`); the button's padding hangs with them so its icon
-      // starts the text's edge.
-      className={cn(className ?? 'text-muted-foreground', '-ml-3')}
+      // (`BlockListRenderer`); the button's padding, less what `Button` pulls a
+      // leading icon into it, hangs with them so its icon starts the text's edge.
+      className={cn(className ?? 'text-muted-foreground', '-ml-2.5')}
       // Keeps the edited block focused through a tap. A tap's blur runs before
       // its click, unlike a mouse press's, which `useEditorBlur` holds until the
       // release. On a tap, that blur drops an empty block being edited, and the

@@ -82,9 +82,11 @@ const Button = ({
     cn('text-icon', className).split(' ').includes('text-icon')
 
   // CSS cannot see text nodes, so only here does an icon before a bare label
-  // differ from an icon alone or a chevron after one.
+  // differ from an icon alone, one beside a visually hidden name, or a chevron
+  // after one.
   const [first, ...rest] = Children.toArray(children)
-  const leadingIcon = typeof first === 'object' && rest.length > 0
+  const leadingIcon =
+    typeof first === 'object' && rest.some((c) => typeof c === 'string' || typeof c === 'number')
 
   return (
     <Comp

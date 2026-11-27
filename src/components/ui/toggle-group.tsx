@@ -16,9 +16,9 @@
  * Radix reports pressing the checked segment again as `''`; callers ignore it.
  *
  * On a phone (`useIsTouch() && usePhoneLayout()`) a group of up to four
- * segments spans its column in equal segments, as Material's fixed tabs and
- * iOS's segmented control do; elsewhere, and with more segments, they hug
- * their labels.
+ * segments fills the room its row leaves it, in equal segments, as Material's
+ * fixed tabs and iOS's segmented control do; elsewhere, and with more
+ * segments, they hug their labels.
  */
 
 'use client'
@@ -85,7 +85,7 @@ function ToggleGroup({
       data-slot="toggle-group"
       className={cn(
         toggleGroupVariants({ size }),
-        spans && 'flex w-full [&>[data-slot=toggle-group-item]]:flex-1',
+        spans && 'flex grow [&>[data-slot=toggle-group-item]]:flex-1',
         className,
       )}
       onKeyDown={(event) => {

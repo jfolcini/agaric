@@ -128,7 +128,8 @@ const Badge = ({
         ? STATUS_STATE_CLASSES[statusState ?? 'default']
         : ''
   const [first, ...rest] = Children.toArray(children)
-  const leadingIcon = typeof first === 'object' && rest.length > 0
+  const leadingIcon =
+    typeof first === 'object' && rest.some((c) => typeof c === 'string' || typeof c === 'number')
 
   return (
     <Comp

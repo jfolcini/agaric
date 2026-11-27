@@ -142,6 +142,8 @@ test.describe('on a phone @search @mobile', () => {
     const op = header.getByRole('radiogroup', { name: 'Match' })
     expect(Math.round((await box(not)).height)).toBe(36)
     expect(Math.round((await box(op)).height)).toBe(36)
+    // The segments span what NOT leaves of its line, not a line of their own.
+    expect(Math.round((await box(op)).y)).toBe(Math.round((await box(not)).y))
 
     // A result row is as tall as a Pages row.
     await navigateToView(page, 'Pages')

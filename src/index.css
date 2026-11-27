@@ -2883,11 +2883,10 @@ mark[data-highlight-color='purple'] {
 /* A phone's toasts end left of the floating capture button (`AppToaster`):
    sonner sizes a toast as the screen less twice its left offset, which would
    run it under the button, so its right offset is honoured here. Only while
-   the button is on screen: hidden (`data-shown`), absent, or under a modal
-   layer (Radix marks what it covers `data-aria-hidden`), it leaves the toast
-   the full width. */
+   the button is on screen: hidden (`data-shown`) or absent, it leaves the
+   toast the full width. */
 @media (max-width: 600px) {
-  body:has([data-testid='quick-capture-fab'][data-shown='true']):not(:has([data-aria-hidden]))
+  body:has([data-testid='quick-capture-fab'][data-shown='true'])
     [data-sonner-toaster][data-x-position='left']
     [data-sonner-toast] {
     width: calc(100% - var(--mobile-offset-left) - var(--mobile-offset-right));
