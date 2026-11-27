@@ -10,10 +10,11 @@ Lane C of round 3 of the UI review (#7165).
 
 **U2: the editing frame against the scrollbar (phone)**
 
-- Cause: App's main `ScrollArea` takes `data-slot="main-content"`, which replaces the root's `data-slot="scroll-area"`. The index.css rules that swap Radix's overlay bar for a space-reserving native one never match it. So the main view draws Radix's overlay bar (8 px on touch, shown while hovered or scrolled) over the viewport's right padding.
-- Fix: below `md` the main viewport's right padding adds the bar's width (`pr-[calc(1rem+--spacing(1.5))] coarse:pr-[calc(1rem+--spacing(2))]`). The focused frame now ends 8 px from the bar, as it starts 8 px from the left edge (before: 0 px).
-- Pages, the day view and lists all follow. Desktop is unchanged: `md:p-6` still applies, and the column there is centred far from the bar.
-- Restoring the slot would give the main view the native bar everywhere, a desktop change the brief ruled out.
+- The scrollbar: App's main `ScrollArea` takes `data-slot="main-content"`, which replaces the root's `data-slot="scroll-area"`. The index.css rules that swap Radix's overlay bar for a space-reserving native one never match it. So the main view draws Radix's overlay bar (8 px on touch, shown while hovered or scrolled) over the pane's right padding.
+- Cause: the brief's guess, the scroll container's padding, was wrong. Text already stops 8 px clear of the bar. Only the phone editing frame reached into the right padding (`-mr-2`, `SortableBlock.tsx`), to match its left inset against the screen edge, and so it ran under the bar.
+- Fix: the frame no longer reaches right. It now ends 8 px from the bar, as it starts 8 px from the left edge (before: 0 px). Pages and the day view follow, at every depth; list rows never reached into the padding.
+- Rejected: widening the viewport's right padding first. It gave the same frame inset but took 8 px of width from every phone view, and that wrapped an empty Week day's chip row onto a second line (`phone-block-lists.spec.ts` "an empty Week day is one row", 88 px against at most 56).
+- Desktop is unchanged: the frame rule is phone-only.
 
 **U8: the gap under a day or page title (desktop)**
 
@@ -27,5 +28,5 @@ Lane C of round 3 of the UI review (#7165).
 **Tests**
 
 - `phone-bottom-sheets.spec.ts`: "the scope toggle keeps one segment high and the results take the rest of the sheet". Red without `grow-0`: `groupOverSegment` was 333, expected 0.
-- `phone-content-edge.spec.ts`: "a focused task's editing frame sits as far from the scrollbar as from the left edge" replaces "… keeps the same inset on both sides". The old test measured the right inset to the window edge. Red without the padding: 8 px apart.
+- `phone-content-edge.spec.ts`: "a focused task's editing frame sits as far from the scrollbar as from the left edge" replaces "… keeps the same inset on both sides". The old test measured the right inset to the window edge. Red with `-mr-2` put back: 8 px apart.
 - `sticky-toolbar.spec.ts`: "on page / today's journal day, the first block sits the bar's height under the header, and focusing it moves nothing". Red with `pb-3`: 13 above the hairline, expected 9. Red without the tint change: 36 below it, expected 28.

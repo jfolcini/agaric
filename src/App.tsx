@@ -807,10 +807,8 @@ function App() {
               // Where `QuickCaptureFab` shows, `--fab-clearance` keeps the last
               // control clear of it (the `md:` copy outranks `md:p-6`), except
               // where `keepsCaptureRoom` says not.
-              // Below `md` the right padding adds the scrollbar's width: the bar
-              // overlays the viewport, and content keeps the left inset from it.
               viewportClassName={cn(
-                'p-4 pr-[calc(1rem+--spacing(1.5))] coarse:pr-[calc(1rem+--spacing(2))] md:p-6 focus-ring-visible pb-[calc(1rem+var(--safe-area-bottom))] md:pb-[calc(1.5rem+var(--safe-area-bottom))] scroll-pb-[var(--safe-area-bottom)]',
+                'p-4 md:p-6 focus-ring-visible pb-[calc(1rem+var(--safe-area-bottom))] md:pb-[calc(1.5rem+var(--safe-area-bottom))] scroll-pb-[var(--safe-area-bottom)]',
                 shouldShowMobileChrome &&
                   keepsCaptureRoom(currentView) &&
                   'pb-[calc(var(--fab-clearance)+var(--safe-area-bottom))] md:pb-[calc(var(--fab-clearance)+var(--safe-area-bottom))]',

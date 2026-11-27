@@ -422,13 +422,11 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
           'flex flex-1 min-w-0 items-start gap-(--block-gap) rounded-md ring-inset group-focus/row:ring-[3px] group-focus/row:ring-ring',
           isFocused && 'block-editing',
           isSelected && 'block-selected',
-          // On a phone, at every depth, the frame moves right and, unless its
-          // chevron sits at the row end, reaches into the pane's right padding
-          // by the same amount, its content where it was: a top-level frame
-          // hangs to the screen's edge on the left and stops at the padding on
-          // the right, and this evens the two insets.
+          // On a phone, at every depth, the frame moves right, its content
+          // where it was: a top-level frame would hang to the screen's edge on
+          // the left. On the right it stops at the pane's padding, as far from
+          // the scrollbar, which overlays that padding, as from the left edge.
           isTouchDevice && isPhone && 'ml-2 [&>:first-child]:-ml-2',
-          isTouchDevice && isPhone && !(hasChildren && chevronAtRowEnd) && '-mr-2',
         )}
         data-testid="block-frame"
       >
