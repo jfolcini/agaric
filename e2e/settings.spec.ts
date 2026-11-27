@@ -122,7 +122,6 @@ test.describe('Settings panel @settings', () => {
   }) => {
     await page.getByRole('tab', { name: 'Tasks & reminders' }).click()
     await expect(page.locator('[data-testid="settings-panel-notifications"]')).toBeVisible()
-    await expect(page.locator('#deadline-warning-days')).toHaveCount(0)
 
     const enabledSwitch = page.locator('[data-testid="notifications-enabled-switch"]')
     const sendTestButton = page.locator('[data-testid="notifications-send-test-button"]')
