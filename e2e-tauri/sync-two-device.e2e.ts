@@ -1252,7 +1252,7 @@ describe('Agaric real-backend two-device sync (#5365) @sync @editor @pages @sett
       await waitInOpenView(
         async () =>
           (await textOf(DONE_PANEL)).includes(LATE_TASK) &&
-          (await $(OVERDUE_TAB).getAttribute('aria-selected')) === 'true' &&
+          // Under any tab: with nothing left to list, the panel drops its tabs.
           !(await textOf(DUE_PANEL)).includes(LATE_TASK),
         () => 'the open journal still lists the done task under Overdue',
       )
