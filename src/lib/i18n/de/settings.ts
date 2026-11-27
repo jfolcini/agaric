@@ -301,6 +301,8 @@ export const settings: Record<string, string> = {
   'settings.journalTemplateHelp': 'Ein neuer Tag in diesem Bereich beginnt als Kopie dieser Seite.',
   'settings.journalTemplateNone': 'Keine',
   'settings.journalTemplateOpen': 'Öffnen',
+  'settings.templatesLabel': 'Vorlagenseiten',
+  'settings.templatesOpen': 'Vorlagen öffnen',
   'settings.journalDateFormatLabel': 'Datumsformat des Journals',
   'settings.journalDateFormatHelp':
     'Wie Journaltitel angezeigt werden. Seiten werden immer als YYYY-MM-DD gespeichert, daher wirkt sich eine Änderung nie auf bestehende Journale aus.',

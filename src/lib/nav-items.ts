@@ -5,11 +5,13 @@
  * (`useAppSpaceLifecycle`, `useViewChangeAnnouncer`) can read it without
  * importing `components/` (lib-layering guard, #3121).
  *
- * #5269 — the sidebar lists the daily surfaces (`SIDEBAR_NAV_ITEMS`), a lower
- * group (`SIDEBAR_LOWER_NAV_ITEMS`, #7040 D2) and Settings in its footer. The
- * other views are opened from the Pages header or the Edit history row in
- * Settings › Data; `NAV_ITEMS` carries every view, for those buttons and for
- * the header label, window title and view-change announcement.
+ * #5269 — the sidebar lists the daily surfaces (`SIDEBAR_NAV_ITEMS`) and, at
+ * the foot of its list, the views a day needs less often
+ * (`SIDEBAR_LOWER_NAV_ITEMS`, #7155 R21) above its footer's Sync and
+ * Settings. The other views are opened from the Pages header or a row in
+ * Settings (Templates, Edit history); `NAV_ITEMS` carries every view, for
+ * those buttons and for the header label, window title and view-change
+ * announcement.
  */
 
 import {
@@ -42,10 +44,9 @@ export const SIDEBAR_NAV_ITEMS: NavItem[] = [
   { id: 'tags', icon: Tag, labelKey: 'sidebar.tags' },
 ]
 
-/** The sidebar's lower group, below the main list. */
+/** The views at the foot of the sidebar's list, above its Sync and Settings rows. */
 export const SIDEBAR_LOWER_NAV_ITEMS: NavItem[] = [
   { id: 'graph', icon: Network, labelKey: 'sidebar.graph' },
-  { id: 'templates', icon: LayoutTemplate, labelKey: 'sidebar.templates' },
   { id: 'trash', icon: Trash2, labelKey: 'sidebar.trash' },
 ]
 
@@ -57,6 +58,7 @@ export const SETTINGS_NAV_ITEM: NavItem = {
 }
 
 const VIEWS_OUTSIDE_SIDEBAR: NavItem[] = [
+  { id: 'templates', icon: LayoutTemplate, labelKey: 'sidebar.templates' },
   { id: 'query', icon: Funnel, labelKey: 'sidebar.query' },
   { id: 'history', icon: History, labelKey: 'sidebar.history' },
 ]

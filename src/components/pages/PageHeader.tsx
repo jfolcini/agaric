@@ -29,6 +29,7 @@ import { useEmojiRecents } from '@/hooks/useEmojiRecents'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { usePageAliases } from '@/hooks/usePageAliases'
 import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
+import { usePageProperties } from '@/hooks/usePageProperties'
 import { usePageTemplateMeta } from '@/hooks/usePageTemplateMeta'
 import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { spaceMoveFailureMessage, useSpaceMove } from '@/hooks/useSpaceMove'
@@ -148,11 +149,12 @@ export function PageHeader({
     }
   }, [forceTagSection])
 
-  // --- Kebab + property-expand state ---
+  // --- Kebab + properties-dialog state ---
   // Delete-dialog state lives in `usePageDeleteAction` (see top of the
   // component).
   const [kebabOpen, setKebabOpen] = useState(false)
-  const [forcePropertyExpanded, setForcePropertyExpanded] = useState(false)
+  const [propertiesOpen, setPropertiesOpen] = useState(false)
+  const propertyCount = usePageProperties(pageId).data?.length ?? 0
 
   // --- Page-level undo/redo ---
   const canRedo = useUndoStore((state) => {
@@ -309,8 +311,8 @@ export function PageHeader({
     setKebabOpen(false)
   }, [])
 
-  const handleKebabAddProperty = useCallback(() => {
-    setForcePropertyExpanded(true)
+  const handleKebabOpenProperties = useCallback(() => {
+    setPropertiesOpen(true)
     setKebabOpen(false)
   }, [])
 
@@ -625,7 +627,7 @@ export function PageHeader({
               onKebabOpenChange={setKebabOpen}
               onAddAlias={handleKebabAddAlias}
               onAddTag={handleKebabAddTag}
-              onAddProperty={handleKebabAddProperty}
+              onOpenProperties={handleKebabOpenProperties}
               onToggleTemplate={() => void handleToggleTemplate()}
               onToggleJournalTemplate={() => void handleToggleJournalTemplate()}
               onExport={() => void handleExport()}
@@ -670,8 +672,8 @@ export function PageHeader({
             onStopEditing={stopEditingAliases}
           />
 
-          {/* Tag badges row */}
-          {(appliedTags.length > 0 || showTagPicker || forceTagSection) && (
+          {/* Tag badges row, ending in the Properties chip (#7155 R13) */}
+          {(appliedTags.length > 0 || propertyCount > 0 || showTagPicker || forceTagSection) && (
             <PageTagSection
               appliedTags={appliedTags}
               availableTags={availableTags}
@@ -683,6 +685,8 @@ export function PageHeader({
               onAddTag={(tagId) => void handleTagAdd(tagId)}
               onRemoveTag={(tagId) => void handleRemoveTag(tagId)}
               onCreateTag={() => void handleTagCreate()}
+              propertyCount={propertyCount}
+              onOpenProperties={() => setPropertiesOpen(true)}
             />
           )}
 
@@ -690,7 +694,12 @@ export function PageHeader({
               throwing on a malformed value doesn't blank the page header
               (UX Tier 3). */}
           <FeatureErrorBoundary name="PagePropertyTable">
-            <PagePropertyTable pageId={pageId} forceExpanded={forcePropertyExpanded} />
+            <PagePropertyTable
+              pageId={pageId}
+              open={propertiesOpen}
+              onOpenChange={setPropertiesOpen}
+              returnFocusRef={kebab}
+            />
           </FeatureErrorBoundary>
         </div>
       </ViewHeader>

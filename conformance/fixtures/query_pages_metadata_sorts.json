@@ -80,6 +80,19 @@
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "work",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B7",
+        "parent_id": null,
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
       }
     ],
     "op_log_digest": {
@@ -136,6 +149,12 @@
       "error": "not_found",
       "name": "open_refuses_a_content_block",
       "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "open_takes_a_tag_as_nothing_to_stamp",
+      "returns": ["record_page_open"]
     }
   ],
   "expected_queries": [
@@ -254,6 +273,15 @@
       "comment": "S4 is a content block, not a page: nothing is stamped.",
       "expect_error": "not_found",
       "name": "open_refuses_a_content_block",
+      "via": "command"
+    },
+    {
+      "args": {
+        "pageId": "S7"
+      },
+      "command": "record_page_open",
+      "comment": "S7 is a tag, which opens through the same navigation as a page: Ok, and nothing is stamped, so `last-opened` still lists pages only.",
+      "name": "open_takes_a_tag_as_nothing_to_stamp",
       "via": "command"
     }
   ],
@@ -416,6 +444,13 @@
         "id": "S6",
         "parent_id": "S3",
         "position": 2
+      },
+      {
+        "block_type": "tag",
+        "content": "work",
+        "id": "S7",
+        "parent_id": null,
+        "position": 4
       }
     ],
     "properties": [],

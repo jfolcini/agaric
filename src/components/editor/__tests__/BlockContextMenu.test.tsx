@@ -855,12 +855,12 @@ describe('BlockContextMenu', () => {
 
     const items = screen.getAllByRole('menuitem')
     // Every actionable row uses the app-wide `focus-ring-visible` recipe (a
-    // visible ring, decoupled from hover) and contains the ring (`ring-inset`)
+    // visible ring, decoupled from hover) and draws the ring inside (`-outline-offset-3`)
     // so it doesn't clip at the popover edge / separators. The redundant
     // `focus-visible:outline-none` is folded into the utility and removed.
     for (const item of items) {
       expect(item.className).toContain('focus-ring-visible')
-      expect(item.className).toContain('ring-inset')
+      expect(item.className).toContain('focus-visible:-outline-offset-3')
       expect(item.className).not.toContain('focus-visible:outline-none')
       expect(item.className).not.toContain('focus-visible:bg-accent')
     }

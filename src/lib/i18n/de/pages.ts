@@ -91,7 +91,7 @@ export const pages: Record<string, string> = {
   'pageHeader.removeJournalTemplate': 'Journalvorlage entfernen',
   'pageHeader.menuAddAlias': 'Alias hinzufügen',
   'pageHeader.menuAddTag': 'Tag hinzufügen',
-  'pageHeader.menuAddProperty': 'Eigenschaft hinzufügen',
+  'pageHeader.menuProperties': 'Eigenschaften…',
   'pageHeader.sectionAdd': 'Hinzufügen',
   'pageHeader.sectionView': 'Ansicht',
   'pageHeader.sectionTemplate': 'Vorlage',
@@ -426,6 +426,7 @@ export const pages: Record<string, string> = {
   'pageProperty.addFailed': 'Eigenschaft konnte nicht hinzugefügt werden',
   'pageProperty.toggleLabel': 'Eigenschaften ein-/ausblenden',
   'pageProperty.propertiesButton': 'Eigenschaften',
+  'pageProperty.dialogDescription': 'Die Eigenschaften dieser Seite.',
   'pageProperty.addPropertyLabel': 'Eigenschaft hinzufügen',
   'pageProperty.addPropertyButton': 'Eigenschaft hinzufügen',
   'pageProperty.addPropertyDisabledInfo':

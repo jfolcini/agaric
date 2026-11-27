@@ -498,6 +498,10 @@ export const settings: Record<string, string> = {
   'settings.journalTemplateHelp': 'A new day in this space starts as a copy of this page.',
   'settings.journalTemplateNone': 'None',
   'settings.journalTemplateOpen': 'Open',
+  // Translators: Settings › General: the row whose button opens the Templates view, the list of
+  // the space's template pages.
+  'settings.templatesLabel': 'Template pages',
+  'settings.templatesOpen': 'Open templates',
 
   // Translators: Settings › General: "Journal date format" dropdown. Each option shows a pattern
   // and an example; the order of the parts is fixed (only month and weekday names follow the

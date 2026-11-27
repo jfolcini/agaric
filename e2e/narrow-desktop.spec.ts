@@ -62,3 +62,30 @@ test("Journal › Week's date chip shows its whole text beside an icon-only Sear
   const fit = await date.evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth }))
   expect(fit.scroll).toBeLessThanOrEqual(fit.client)
 })
+
+test('Pages keeps search, count, sort, Saved views and New page on one row @pages', async ({
+  page,
+}) => {
+  await navigateToView(page, 'Pages')
+  const header = page.locator('.page-browser-header')
+  const controls = [
+    header.getByRole('textbox', { name: 'Search pages...' }),
+    header.getByTestId('page-browser-count'),
+    header.getByRole('combobox', { name: 'Sort order' }),
+    header.getByRole('button', { name: 'Saved views' }),
+    header.getByRole('button', { name: 'New page', exact: true }),
+  ]
+  const centre = (box: { y: number; height: number }) => box.y + box.height / 2
+  let search: { x: number; y: number; width: number; height: number } | null = null
+  let previousRight = -Infinity
+  for (const control of controls) {
+    const box = await control.boundingBox()
+    if (box === null) throw new Error('a Pages header control is not laid out')
+    search ??= box
+    expect(Math.abs(centre(box) - centre(search))).toBeLessThan(2)
+    expect(box.x).toBeGreaterThanOrEqual(previousRight)
+    previousRight = box.x + box.width
+  }
+  // The search field gives way, down to the 12rem floor the row wraps at.
+  expect(search?.width).toBeGreaterThanOrEqual(192)
+})

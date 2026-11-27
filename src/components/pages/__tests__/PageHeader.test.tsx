@@ -1657,7 +1657,7 @@ describe('PageHeader kebab menu reorganization (/H12)', () => {
     expect(screen.queryByRole('button', { name: /remove tag/i })).not.toBeInTheDocument()
   })
 
-  it('kebab menu shows "Add alias", "Add tag", "Add property" items', async () => {
+  it('kebab menu shows "Add alias", "Add tag", "Properties…" items', async () => {
     const user = userEvent.setup()
     renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
@@ -1665,7 +1665,7 @@ describe('PageHeader kebab menu reorganization (/H12)', () => {
 
     expect(await screen.findByText('Add alias')).toBeInTheDocument()
     expect(screen.getByText('Add tag')).toBeInTheDocument()
-    expect(screen.getByText('Add property')).toBeInTheDocument()
+    expect(screen.getByText('Properties…')).toBeInTheDocument()
   })
 
   it('clicking kebab "Add alias" shows alias editor', async () => {
@@ -1701,20 +1701,55 @@ describe('PageHeader kebab menu reorganization (/H12)', () => {
     })
   })
 
-  it('clicking kebab "Add property" shows property table', async () => {
+  // #7155 R13 — ⋮ › Properties… opens the page's properties whether or not it has any.
+  it('kebab "Properties…" opens the properties dialog on a page with none, which shows no chip', async () => {
+    const user = userEvent.setup()
+    setupTagMock(['TAG_1'])
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
+    await screen.findByText('urgent')
+    expect(screen.queryByRole('button', { name: /^Properties/ })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText('Properties…'))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Properties' })
+    expect(within(dialog).getByRole('button', { name: 'Add property' })).toBeInTheDocument()
+  })
+
+  // #7155 R13 — the collapsible under the tags is gone: a chip ends the tags row.
+  it('a page with properties ends its tags row with a "Properties N" chip that opens the dialog', async () => {
     const user = userEvent.setup()
     setupTagMock([])
+    const tagMock = mockedInvoke.getMockImplementation()
+    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+      if (cmd === 'get_properties')
+        return [
+          {
+            key: 'status',
+            value_text: 'active',
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+          },
+        ]
+      return tagMock?.(cmd, args)
+    })
 
     renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
-    // Open kebab and click "Add property"
-    await user.click(screen.getByRole('button', { name: /page actions/i }))
-    await user.click(await screen.findByText('Add property'))
+    const chip = await screen.findByRole('button', { name: 'Properties 1' })
+    const addTag = screen.getByRole('button', { name: /add tag/i })
+    expect(addTag.compareDocumentPosition(chip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(document.querySelector('.page-property-table')).not.toBeInTheDocument()
 
-    // Property table should appear
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Properties/ })).toBeInTheDocument()
-    })
+    await user.click(chip)
+
+    const dialog = await screen.findByRole('dialog', { name: 'Properties' })
+    expect(
+      within(dialog).getByLabelText(t('pageProperty.valueLabel', { key: 'status' })),
+    ).toHaveValue('active')
   })
 
   it('aliases shown when aliases exist', async () => {

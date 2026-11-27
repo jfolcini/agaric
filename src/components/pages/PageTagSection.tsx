@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
 import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { SectionCount } from '@/components/ui/section-count'
 import type { TagEntry } from '@/hooks/useBlockTags'
 import { useEmojiRecents } from '@/hooks/useEmojiRecents'
 import { useTagColorStyle } from '@/hooks/useTagColorStyle'
@@ -47,6 +48,9 @@ export interface PageTagSectionProps {
   onAddTag: (tagId: string) => void
   onRemoveTag: (tagId: string) => void
   onCreateTag: () => void
+  /** The page's property count; with none, the row shows no Properties chip. */
+  propertyCount: number
+  onOpenProperties: () => void
 }
 
 export function PageTagSection({
@@ -60,6 +64,8 @@ export function PageTagSection({
   onAddTag,
   onRemoveTag,
   onCreateTag,
+  propertyCount,
+  onOpenProperties,
 }: PageTagSectionProps) {
   const { t } = useTranslation()
   const tagInputRef = useRef<HTMLInputElement>(null)
@@ -201,6 +207,17 @@ export function PageTagSection({
           </ScrollArea>
         </MenuPopoverContent>
       </Popover>
+
+      {propertyCount > 0 && (
+        <Button
+          variant="ghost"
+          size="xs"
+          className="text-muted-foreground"
+          onClick={onOpenProperties}
+        >
+          <SectionCount label={t('pageProperty.propertiesButton')} count={propertyCount} />
+        </Button>
+      )}
 
       {/* #286 — tag-name emoji picker. Splices the chosen emoji into the
           tag-name input at the caret. Shared dialog primitive (#319). */}

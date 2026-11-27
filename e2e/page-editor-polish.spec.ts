@@ -142,6 +142,22 @@ function referenceControls(page: Page): ReferenceControls {
   }
 }
 
+/** The link-kind segments' widths, and how much of its row the control leaves unfilled. */
+function kindLayout(kind: Locator) {
+  return kind.evaluate((el) => {
+    const row = el.parentElement
+    if (row === null) throw new Error('the kind control has no row')
+    const style = getComputedStyle(row)
+    const column = row.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+    return {
+      segments: [...el.querySelectorAll('[role="radio"]')].map((r) =>
+        Math.round(r.getBoundingClientRect().width),
+      ),
+      unfilled: Math.round(column - el.getBoundingClientRect().width),
+    }
+  })
+}
+
 /** Every control's painted height, which the first one's must match. */
 async function expectOneHeight(page: Page): Promise<void> {
   const controls = referenceControls(page)
@@ -226,6 +242,14 @@ test.describe('the linked references’ controls @pages', () => {
     await openShowcase(page)
     await expectOneHeight(page)
   })
+
+  test('the link-kind segments hug their labels', async ({ page }) => {
+    await openShowcase(page)
+    const { segments, unfilled } = await kindLayout(referenceControls(page).kind)
+    // "All" is the shortest label.
+    expect(segments[0]).toBeLessThan(segments[1] ?? 0)
+    expect(unfilled).toBeGreaterThan(0)
+  })
 })
 
 test.describe('the linked references’ controls on a phone @pages @mobile', () => {
@@ -248,5 +272,15 @@ test.describe('the linked references’ controls on a phone @pages @mobile', () 
       await expect44(radio, `kind ${await radio.textContent()}`)
     }
     for (const [name, el] of Object.entries(rest)) await expect44(el, name)
+  })
+
+  test('the link-kind control spans its row in equal segments', async ({ page }) => {
+    await waitForBoot(page)
+    await seed(page)
+    await openPageMobile(page, TITLE)
+    const { segments, unfilled } = await kindLayout(referenceControls(page).kind)
+    expect(segments).toHaveLength(3)
+    expect(new Set(segments).size).toBe(1)
+    expect(unfilled).toBe(0)
   })
 })

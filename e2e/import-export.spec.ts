@@ -7,6 +7,7 @@ import JSZip from 'jszip'
 
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
+  closePageProperties,
   expect,
   getInvokeCalls,
   importFile,
@@ -16,6 +17,7 @@ import {
   navigateToDataSettings,
   navigateToView,
   openPage,
+  openPageProperties,
   reopenTitled,
   rowOf,
   test,
@@ -844,8 +846,9 @@ test.describe('The real importer @markdown', { tag: '@real-only' }, () => {
       'data-id',
       await pageIdTitled(page, 'Notes'),
     )
-    await page.locator('.page-property-table-header').click()
+    await openPageProperties(page)
     await expect(page.getByLabel('reviewer value', { exact: true })).toHaveValue('notion-ann')
+    await closePageProperties(page)
 
     await reopenTitled(page, 'notion Org')
     await expectTaskState(page, 'org-task', 'TODO')

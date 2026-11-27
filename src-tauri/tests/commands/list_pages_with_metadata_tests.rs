@@ -3783,8 +3783,15 @@ async fn record_page_open_refuses_what_is_not_a_live_page_5371() {
         .unwrap();
     let content = "01CHILD0000000000000000P8X";
     seed_child(&pool, content, page, "a block").await;
+    let trashed_tag = "01TAG0000000000000000000P8";
+    insert_block(&pool, trashed_tag, "tag", "gone", None, None).await;
+    sqlx::query("UPDATE blocks SET deleted_at = 1 WHERE id = ?")
+        .bind(trashed_tag)
+        .execute(&pool)
+        .await
+        .unwrap();
 
-    for id in ["01UNKNOWN00000000000000000", content, page] {
+    for id in ["01UNKNOWN00000000000000000", content, page, trashed_tag] {
         let err = record_page_open_inner(&pool, id.into())
             .await
             .expect_err("only a live page can be opened");
@@ -3798,6 +3805,23 @@ async fn record_page_open_refuses_what_is_not_a_live_page_5371() {
         .await
         .unwrap();
     assert_eq!(rows, 0, "a refused open writes nothing");
+}
+
+#[tokio::test]
+async fn record_page_open_answers_ok_for_a_live_tag_and_stamps_nothing() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    let tag = "01TAG0000000000000000000P7";
+    insert_block(&pool, tag, "tag", "work", None, None).await;
+
+    record_page_open_inner(&pool, tag.into())
+        .await
+        .expect("a tag opens through the same navigation as a page");
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM page_opens")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0, "a tag open writes no stamp");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

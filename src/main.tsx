@@ -50,31 +50,9 @@ function AppRoot() {
   )
 }
 
-// #3518 — "ResizeObserver loop completed with undelivered notifications" (and
-// its sibling "ResizeObserver loop limit exceeded") is a notification Chrome
-// fires as a `window` `error` event when a ResizeObserver callback's own
-// side effects (here: `@tanstack/react-virtual`'s row `measureElement` in
-// `useVirtualizedGroupedRows.ts` setting state, which changes layout and
-// re-triggers the observer) push a resize past the current frame. It is a
-// real loop, not a phantom, but it is benign *in effect*: the browser just
-// defers the remaining notifications to the next frame and layout converges
-// — nothing crashed, nothing is stuck.
-//
-// It was reaching the e2e console-error gate (`expectNoConsoleErrors` in
-// `e2e/helpers.ts`) via this handler treating it as an application error,
-// intermittently flaking `pages-view.spec.ts`. Of the three options weighed
-// on the issue — (1) allowlist the string in e2e's
-// `IGNORED_CONSOLE_ERROR_PATTERNS`, (2) stop classifying it as an app error
-// here, (3) shrink the virtualizer's `estimateSize` so the loop doesn't
-// happen — this handler downgrades it to `logger.warn` instead. (1) would
-// permanently blind the e2e gate to a genuine ResizeObserver loop anywhere
-// else in the app, which is a much blunter instrument than fixing the one
-// misclassification. (3) treats a symptom whose magnitude was never
-// measured, and is only worth it if the correction turns out to be large.
-// Downgrading here fixes the actual problem — a browser-generated
-// notification being classified as an application error — at its origin,
-// so every consumer of `logger` (not just this one e2e spec) sees it
-// correctly.
+// The browser's ResizeObserver loop notice is benign (layout converges next
+// frame): debug, which production drops, keeps it out of the user's log and
+// off the e2e console-error gate (#3518).
 const RESIZE_OBSERVER_LOOP_RE =
   /^ResizeObserver loop (completed with undelivered notifications|limit exceeded)/
 
@@ -89,7 +67,7 @@ window.addEventListener('error', (event) => {
     stack: event.error?.stack ?? '',
   }
   if (RESIZE_OBSERVER_LOOP_RE.test(message)) {
-    logger.warn('global', message, data)
+    logger.debug('global', message, data)
     return
   }
   logger.error('global', message, data)

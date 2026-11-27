@@ -6,6 +6,7 @@ import JSZip from 'jszip'
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   attachFile,
+  closePageProperties,
   confirmEach,
   expect,
   focusBlockById,
@@ -14,6 +15,7 @@ import {
   ipc,
   navigateToDataSettings,
   navigateToView,
+  openPageProperties,
   reopenTitled,
   rowOf,
   switchToSpace,
@@ -617,7 +619,7 @@ test.describe('Obsidian vault import @markdown', { tag: '@real-only' }, () => {
       await pageIdTitled(page, 'Über'),
     )
 
-    await page.locator('.page-property-table-header').click()
+    await openPageProperties(page)
     await expect(page.getByLabel('reviewer value', { exact: true })).toHaveValue('obs-alice')
     // A YAML list under an undeclared key is a list, an item holding a comma
     // one item (#6741), and the export writes it back as that YAML list.
@@ -626,6 +628,7 @@ test.describe('Obsidian vault import @markdown', { tag: '@real-only' }, () => {
     expect(await ipc<string>(page, 'export_page_markdown', { pageId: homeId })).toContain(
       'authors: ["Smith, John", "Doe, Jane"]\n',
     )
+    await closePageProperties(page)
 
     // The link names the vault's note, and opens it.
     const chip = rowOf(page, 'obs-links').getByTestId('block-link-chip')
@@ -834,7 +837,7 @@ test.describe('Bibliography import @markdown', { tag: '@real-only' }, () => {
     await expect(warnings).toContainText('missing or malformed citation key')
 
     await reopenTitled(page, 'Bibfam 2024')
-    await page.locator('.page-property-table-header').click()
+    await openPageProperties(page)
     await expect(page.getByLabel('title value', { exact: true })).toHaveValue(
       'A bibliography round trip',
     )
@@ -987,7 +990,7 @@ test.describe('Export read back @markdown', { tag: '@real-only' }, () => {
 
     await importMarkdownPage(page, 'ref-copy', md)
     await reopenTitled(page, 'ref-copy')
-    await page.locator('.page-property-table-header').click()
+    await openPageProperties(page)
     // The row is a page picker, so the value is a ref.
     await expect(page.getByRole('button', { name: 'refowner value', exact: true })).toBeVisible()
     const copy = await propertiesOf(page, await pageIdTitled(page, 'ref-copy'))

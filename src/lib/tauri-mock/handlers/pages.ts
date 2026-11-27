@@ -1756,10 +1756,12 @@ export const pagesHandlers = {
   },
 
   // #5371 — `record_page_open_inner`: stamp a live page as opened now, on
-  // this device only (no op); anything else is `NotFound`.
+  // this device only (no op); a live tag is Ok with nothing stamped, anything
+  // else is `NotFound`.
   record_page_open: (args) => {
     const pageId = (args as Record<string, unknown>)['pageId'] as string
     const page = blocks.get(pageId)
+    if (page?.['block_type'] === 'tag' && !page['deleted_at']) return null
     if (page?.['block_type'] !== 'page' || page['deleted_at']) {
       throw notFoundRejection(`page ${pageId}`)
     }

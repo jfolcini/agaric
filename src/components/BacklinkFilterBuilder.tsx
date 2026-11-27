@@ -198,8 +198,6 @@ export function BacklinkFilterBuilder({
 
       {/* Filter pills + Add button row */}
       <div className="flex flex-wrap items-center gap-1.5">
-        <Filter className="h-3.5 w-3.5 text-muted-foreground" />
-
         <FilterPillRow
           filters={filters.map(ensureAddId)}
           onRemove={handleRemoveFilter}
@@ -214,6 +212,7 @@ export function BacklinkFilterBuilder({
           onClick={() => setShowAddRow(true)}
           aria-label={t('backlink.addFilterLabel')}
         >
+          <Filter className="h-3 w-3" />
           {t('backlink.addFilterLabel')}
         </Button>
 

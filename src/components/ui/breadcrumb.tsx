@@ -53,7 +53,7 @@
  *
  * Text-link crumb segments keep `focus-visible:underline`.
  * Icon-only triggers (`BreadcrumbHome`, `OverflowPopover`) use the standard
- * `focus-visible:ring-[3px]` form-control treatment because the underline rule
+ * `focus-ring-visible` treatment because the underline rule
  * has no visible effect on a single icon glyph (no glyph baseline to decorate;
  * hover- and focus-state would be invisible). Icon buttons additionally get a
  * subtle hover-chip (`hover:bg-accent/40 rounded-sm`) consistent with other

@@ -545,8 +545,9 @@ export function activePopover(page: Page): Locator {
 }
 
 /**
- * Open the Pages-view "Add filter" popover and return its content locator,
- * guaranteeing it is visible before the caller interacts with it.
+ * Open the Pages-view "Add filter" popover (a bottom sheet on a phone, #7101)
+ * and return its content locator, guaranteeing it is visible before the caller
+ * interacts with it.
  *
  * Why a helper: a bare `getByRole('Add filter').click()` is racy under the
  * pre-push load — the click can land a frame before Radix wires the trigger,
@@ -558,7 +559,7 @@ export function activePopover(page: Page): Locator {
  */
 export async function openAddFilter(page: Page): Promise<Locator> {
   const trigger = page.getByRole('button', { name: 'Add filter' })
-  const pop = activePopover(page)
+  const pop = activePopover(page).or(activeSheet(page))
   await trigger.click()
   try {
     await expect(pop).toBeVisible({ timeout: 5000 })
@@ -738,7 +739,8 @@ export async function createPageFromPagesView(page: Page, title: string): Promis
  * simply unreachable below it now that the icon rail is gone. Views outside
  * the sidebar go through their #5269 home: `PAGES_HEADER_VIEWS` through
  * Pages, Status through Settings › App health, History through the Edit
- * history row in Settings › Data.
+ * history row in Settings › Data, Templates through its row in Settings ›
+ * General.
  */
 export async function navigateToView(page: Page, view: string) {
   const headerButtonName = PAGES_HEADER_VIEWS[view]
@@ -764,6 +766,12 @@ export async function navigateToView(page: Page, view: string) {
     await navigateToView(page, 'Settings')
     await openSettingsTab(page, 'App health')
     await expect(page.getByTestId('settings-panel-status')).toBeVisible()
+    return
+  }
+  if (view === 'Templates') {
+    await navigateToView(page, 'Settings')
+    await openSettingsTab(page, 'General')
+    await page.getByRole('button', { name: 'Open templates', exact: true }).click()
     return
   }
   if (view === 'History') {
@@ -1299,6 +1307,32 @@ export async function readClipboard(page: Page): Promise<string> {
     ).__TAURI_INTERNALS__.invoke
     return ((await invoke('plugin:clipboard-manager|read_text')) as string | null) ?? ''
   })
+}
+
+/** The open page's properties dialog (a bottom sheet on a phone, #7155 R13). */
+export function pagePropertiesDialog(page: Page): Locator {
+  return page.getByRole('dialog', { name: 'Properties', exact: true })
+}
+
+/** Open the page's properties from the Properties chip that ends its tags row. */
+export async function openPageProperties(page: Page): Promise<Locator> {
+  await page.getByRole('button', { name: /^Properties \d+$/ }).click()
+  await expect(pagePropertiesDialog(page)).toBeVisible()
+  return pagePropertiesDialog(page)
+}
+
+/** Open the page's properties from its ⋮ menu, which offers them with or without any. */
+export async function openPagePropertiesFromMenu(page: Page): Promise<Locator> {
+  await page.getByRole('button', { name: 'Page actions', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Properties…', exact: true }).click()
+  await expect(pagePropertiesDialog(page)).toBeVisible()
+  return pagePropertiesDialog(page)
+}
+
+/** Close the page's properties, so the page behind takes clicks again. */
+export async function closePageProperties(page: Page): Promise<void> {
+  await pagePropertiesDialog(page).getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(pagePropertiesDialog(page)).toHaveCount(0)
 }
 
 /**

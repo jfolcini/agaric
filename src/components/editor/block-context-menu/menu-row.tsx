@@ -27,7 +27,7 @@ export function renderTrailing(item: MenuItem, keyboardHints: boolean): React.Re
       // #1002 — no magic `ml-4`; the label's `flex-1` + button `gap-2`
       // right-align the hint.
       <span className="text-xs text-muted-foreground">
-        <Kbd keys={item.shortcut} />
+        <Kbd keys={item.shortcut} tone="muted" />
         {item.shortcutNote && ` ${item.shortcutNote}`}
       </span>
     ) : null

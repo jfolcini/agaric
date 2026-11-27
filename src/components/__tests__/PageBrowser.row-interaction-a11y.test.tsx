@@ -124,9 +124,10 @@ describe('PageBrowser', () => {
     const pageRow = screen.getByText('Focus Page').closest('.group') as HTMLElement
     const pageBtn = within(pageRow).getByRole('button', { name: /Focus Page/i })
     expect(pageBtn.className).toContain('focus-ring-visible')
-    // Focus ring must be inset so the inner ScrollArea's
-    // `overflow-hidden` does not clip its left/right legs.
-    expect(pageBtn).toHaveClass('focus-visible:ring-inset')
+    // The ring sits on the button's edge, in the row's padding: past it the
+    // inner ScrollArea's `overflow-hidden` clips its legs, and inset it covers
+    // the title's first letter (the button has no padding).
+    expect(pageBtn).toHaveClass('focus-visible:outline-offset-0')
   })
   it('focused page row carries the list-cursor recipe — the inner button keeps its own focus ring', async () => {
     stubPageRowInvoke(mockedInvoke, {
@@ -157,9 +158,9 @@ describe('PageBrowser', () => {
       : null
     expect(innerBtn).not.toBeNull()
     expect(innerBtn?.className).toContain('focus-ring-visible')
-    expect(innerBtn?.className).toContain('focus-visible:ring-inset')
+    expect(innerBtn?.className).toContain('focus-visible:outline-offset-0')
   })
-  it('star-toggle and delete buttons have ring-inset focus rings', async () => {
+  it('star-toggle and delete buttons draw their focus ring inside', async () => {
     stubPageRowInvoke(mockedInvoke, {
       list_pages_with_metadata: () =>
         pageList([makePage({ id: 'P1', content: 'Inset Buttons Page' })]),
@@ -172,8 +173,8 @@ describe('PageBrowser', () => {
     const pageRow = screen.getByText('Inset Buttons Page').closest('.group') as HTMLElement
     const starBtn = within(pageRow).getByRole('button', { name: /bookmark page/i })
     const deleteBtn = findTrashButton(pageRow)
-    expect(starBtn).toHaveClass('focus-visible:ring-inset')
-    expect(deleteBtn).toHaveClass('focus-visible:ring-inset')
+    expect(starBtn).toHaveClass('focus-visible:-outline-offset-3')
+    expect(deleteBtn).toHaveClass('focus-visible:-outline-offset-3')
   })
   it('delete button is disabled while deletion is in progress', async () => {
     const user = userEvent.setup()

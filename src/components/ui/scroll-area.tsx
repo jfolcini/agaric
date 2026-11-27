@@ -68,7 +68,7 @@ const ScrollArea = ({
         data-slot="scroll-area-viewport"
         {...viewportProps}
         className={cn(
-          'w-full rounded-[inherit] transition-[color,box-shadow] focus-ring-visible focus-visible:outline-1',
+          'w-full rounded-[inherit] transition-[color,box-shadow] focus-ring-visible focus-visible:-outline-offset-3',
           scrollsVertically ? 'flex-auto min-h-0' : 'h-full',
           viewportClassName,
           viewportProps?.className,

@@ -39,6 +39,8 @@ const latchListeners = new Set<() => void>()
 function setLatch() {
   if (sessionLatch) return
   sessionLatch = true
+  // CSS reads it: a touch device draws no focus ring until then (`bare-touch`, `src/index.css`).
+  document.documentElement.setAttribute('data-keyboard', '')
   for (const listener of latchListeners) listener()
 }
 

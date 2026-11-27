@@ -129,17 +129,20 @@ test.describe('phone view headers (#5927) @mobile @pages @journal', () => {
     )
   })
 
-  // P5 (#7040): the capture button is the one filled "create" on a phone.
-  test('Pages: New page is a ghost icon button beside the filled capture button', async ({
+  // P5 (#7040): the capture button is the one filled "create" on a phone, so
+  // New page is outlined like the sort button beside it (#7155 R20).
+  test('Pages: New page is an outlined icon button like sort, beside the filled capture button', async ({
     page,
   }) => {
     await navigateToView(page, 'Pages')
-    const newPage = page.locator('.page-browser-header').getByRole('button', {
-      name: 'New page',
-      exact: true,
-    })
+    const header = page.locator('.page-browser-header')
+    const newPage = header.getByRole('button', { name: 'New page', exact: true })
     await expect(newPage).toBeVisible()
-    await expect(newPage).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+    await expect(newPage).toHaveCSS('border-top-width', '1px')
+    await expect(newPage).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+    const sort = await header.getByRole('combobox', { name: 'Sort order' }).boundingBox()
+    const box = await newPage.boundingBox()
+    expect([box?.width, box?.height]).toEqual([sort?.width, sort?.height])
     await expect44(newPage, 'New page')
   })
 

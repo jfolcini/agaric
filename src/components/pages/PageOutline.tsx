@@ -107,7 +107,7 @@ export function PageOutline({ open, onOpenChange, onCloseAutoFocus }: PageOutlin
                       className={cn(
                         'w-full text-left text-sm truncate rounded px-2 py-1',
                         'hover:bg-accent hover:text-accent-foreground',
-                        'focus-ring-visible focus-visible:ring-inset',
+                        'focus-ring-visible focus-visible:-outline-offset-3',
                         'transition-colors',
                       )}
                       onClick={() => handleClick(h.blockId)}

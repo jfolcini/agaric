@@ -1994,7 +1994,7 @@ test.describe('page mode keeps the keyboard’s place (#5691) @editor @pages', (
     await expect(surface).toBeFocused()
     expect(
       await surface.evaluate(
-        (el) => el.matches(':focus-visible') && getComputedStyle(el).boxShadow !== 'none',
+        (el) => el.matches(':focus-visible') && getComputedStyle(el).outlineStyle === 'solid',
       ),
     ).toBe(true)
     await expect.poll(async () => (await backend(page, pageId))[1]?.text).toBe('two typed')

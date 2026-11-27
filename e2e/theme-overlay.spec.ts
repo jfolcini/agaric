@@ -1,9 +1,9 @@
 /**
  * Overlays and the disabled primary button in each theme. Dark themes dim the
- * page behind a dialog or sheet with a 65% black scrim and show a disabled
- * primary on the muted surface with muted text; light themes keep the 20%
- * scrim and the half-opacity primary. The pairing dialog's Pair button,
- * disabled until a passphrase is typed, is the sample.
+ * page behind a dialog or sheet with a 65% black scrim, light themes with 20%.
+ * A disabled primary is the primary at half opacity in every theme, so it still
+ * reads as the primary (#7155 R16). The pairing dialog's Pair button, disabled
+ * until a passphrase is typed, is the sample.
  *
  * Floating surfaces in dark (#7040): a Select's list is lighter than the card
  * it opens over, and a tooltip stays inverted (the text colour as its fill), as
@@ -76,20 +76,11 @@ for (const theme of [...LIGHT_THEMES, ...DARK_THEMES]) {
       const overlay = page.locator('[data-slot="dialog-overlay"]').last()
       await expect(overlay).toHaveCSS('background-color', dark ? DARK_SCRIM : LIGHT_SCRIM)
 
-      const look = await paint(pair)
-      if (dark) {
-        expect(look).toEqual({
-          background: await tokenColor(page, '--muted'),
-          color: await tokenColor(page, '--muted-foreground'),
-          opacity: '1',
-        })
-      } else {
-        expect(look).toEqual({
-          background: await tokenColor(page, '--primary'),
-          color: await tokenColor(page, '--primary-foreground'),
-          opacity: '0.5',
-        })
-      }
+      expect(await paint(pair)).toEqual({
+        background: await tokenColor(page, '--primary'),
+        color: await tokenColor(page, '--primary-foreground'),
+        opacity: '0.5',
+      })
       // Still inert: no hover, no click target.
       await expect(pair).toHaveCSS('pointer-events', 'none')
     })

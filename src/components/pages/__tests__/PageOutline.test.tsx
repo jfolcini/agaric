@@ -195,12 +195,12 @@ describe('PageOutline', () => {
     document.body.removeChild(realEl)
   })
 
-  it('heading buttons have ring-inset focus rings so they are not clipped by the inner ScrollArea', () => {
+  it('heading buttons draw their focus ring inside so they are not clipped by the inner ScrollArea', () => {
     renderOutline([makeBlock({ id: 'b1', content: '# Heading 1' })])
 
     const headingBtn = screen.getByRole('button', { name: 'Heading 1' })
     expect(headingBtn).toHaveClass('focus-ring-visible')
-    expect(headingBtn).toHaveClass('focus-visible:ring-inset')
+    expect(headingBtn).toHaveClass('focus-visible:-outline-offset-3')
   })
 
   // #5686 — a heading is stored markdown: its links, tags and refs are ids.

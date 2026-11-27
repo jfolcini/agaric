@@ -526,9 +526,9 @@ function BlockListItemInner({
           className={cn(
             // Below `sm` it takes what the chips leave of their line, and
             // shortens before it wraps onto a line of its own. The padding,
-            // taken back by the margin, holds the link's 3 px focus ring,
-            // which `truncate` would clip.
-            'text-xs text-muted-foreground truncate max-w-[40%] -m-[3px] p-[3px] sm:ml-auto max-sm:max-w-none max-sm:min-w-16 max-sm:flex-1 max-sm:basis-0',
+            // taken back by the margin, holds the link's focus ring (a 2 px
+            // gap and 3 px of outline), which `truncate` would clip.
+            'text-xs text-muted-foreground truncate max-w-[40%] -m-[5px] p-[5px] sm:ml-auto max-sm:max-w-none max-sm:min-w-16 max-sm:flex-1 max-sm:basis-0',
             breadcrumbClassName,
           )}
         >
