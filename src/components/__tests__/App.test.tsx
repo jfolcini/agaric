@@ -282,8 +282,8 @@ describe('App', () => {
       expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
 
-    // #5269 — the daily surfaces, the lower group (#7040 D2) and Settings;
-    // the rest open elsewhere.
+    // #5269 — the daily surfaces, Graph and Trash (#7155 R21) and Settings;
+    // the rest open elsewhere, Templates from Settings.
     const sidebar = getSidebar()
     for (const key of [
       'sidebar.journal',
@@ -291,12 +291,12 @@ describe('App', () => {
       'sidebar.search',
       'sidebar.tags',
       'sidebar.graph',
-      'sidebar.templates',
       'sidebar.trash',
       'sidebar.settings',
     ]) {
       expect(sidebar.getByRole('button', { name: t(key) })).toBeInTheDocument()
     }
+    expect(sidebar.queryByText(t('sidebar.templates'))).not.toBeInTheDocument()
     expect(sidebar.queryByText(t('sidebar.query'))).not.toBeInTheDocument()
     expect(sidebar.queryByText(t('sidebar.history'))).not.toBeInTheDocument()
   })

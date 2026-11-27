@@ -49,6 +49,8 @@ const defaultProps = {
   onAddTag: vi.fn(),
   onRemoveTag: vi.fn(),
   onCreateTag: vi.fn(),
+  propertyCount: 0,
+  onOpenProperties: vi.fn(),
 }
 
 beforeEach(() => {

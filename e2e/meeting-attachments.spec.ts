@@ -4,10 +4,12 @@ import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activeDialog,
   activeSuggestionList,
+  closePageProperties,
   expect,
   focusBlockById,
   ipc,
   openPage,
+  openPageProperties,
   reopenPage,
   showJournalPages,
   test,
@@ -108,12 +110,10 @@ test.describe('/meeting makes a meeting page linked from the block @attachments 
     await expect(page.getByText(`Action items for ${title}`)).toBeVisible()
     await expect(page.getByText('Shipped it.')).toBeVisible()
     await expect(page.getByText('call.ogg')).toBeVisible()
-    await page.getByRole('button', { name: /^Properties/ }).click()
-    const meetingDate = page
-      .locator('.page-property-table')
-      .getByText('Meeting Date', { exact: true })
-    await expect(meetingDate).toBeVisible()
+    const properties = await openPageProperties(page)
+    await expect(properties.getByText('Meeting Date', { exact: true })).toBeVisible()
     await expect(page.getByLabel('meeting_date value')).toHaveValue(day)
+    await closePageProperties(page)
     await expect(page.getByRole('button', { name: 'Remove tag meeting' })).toBeVisible()
 
     await reopenPage(page, title)

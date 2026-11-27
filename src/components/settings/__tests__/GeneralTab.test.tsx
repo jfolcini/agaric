@@ -18,6 +18,7 @@ import { axe } from 'vitest-axe'
 import { GeneralTab } from '@/components/settings/GeneralTab'
 import { i18n, t } from '@/lib/i18n'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
+import { useNavigationStore } from '@/stores/navigation'
 
 const LANGUAGE_KEY = 'agaric-language'
 
@@ -44,6 +45,16 @@ describe('GeneralTab', () => {
   it('has no a11y violations', async () => {
     const { container } = render(<GeneralTab />)
     expect(await axe(container)).toHaveNoViolations()
+  })
+
+  // #7155 R21 — Templates left the sidebar; Settings is its way in.
+  it('opens the Templates view from its row', async () => {
+    const user = userEvent.setup()
+    render(<GeneralTab />)
+
+    await user.click(screen.getByRole('button', { name: t('settings.templatesOpen') }))
+
+    expect(useNavigationStore.getState().currentView).toBe('templates')
   })
 })
 

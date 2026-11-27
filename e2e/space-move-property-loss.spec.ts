@@ -4,10 +4,12 @@ import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activeAlertDialog,
   chooseSelectOption,
+  closePageProperties,
   expect,
   ipc,
   navigateToView,
   openPage,
+  openPageProperties,
   switchToSpace,
   test,
   waitForBoot,
@@ -158,7 +160,7 @@ test('a property defined differently in the target is dropped once confirmed, an
   await switchToSpace(page, 'Work')
   await openFromPages(page, 'Moving page')
   await expect(page.getByText('moving line', { exact: true })).toBeVisible()
-  await expect(page.locator('.page-property-table-header')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /^Properties \d+$/ })).toHaveCount(0)
 
   // Ctrl+Z reaches the page's undo only with no block focused.
   await expect(page.getByTestId('block-editor')).toHaveCount(0)
@@ -179,8 +181,10 @@ async function openFromPages(page: Page, title: string): Promise<void> {
 
 /** The open page's `level`, read from its property table. */
 async function levelOfOpenPage(page: Page): Promise<string> {
-  await page.locator('.page-property-table-header').click()
+  await openPageProperties(page)
   const input = page.getByLabel('level value', { exact: true })
   await expect(input).toBeVisible()
-  return input.inputValue()
+  const level = await input.inputValue()
+  await closePageProperties(page)
+  return level
 }

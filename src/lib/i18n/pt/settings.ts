@@ -299,6 +299,8 @@ export const settings: Record<string, string> = {
   'settings.journalTemplateHelp': 'Um novo dia neste espaço começa como uma cópia desta página.',
   'settings.journalTemplateNone': 'Nenhum',
   'settings.journalTemplateOpen': 'Abrir',
+  'settings.templatesLabel': 'Páginas de modelo',
+  'settings.templatesOpen': 'Abrir modelos',
   'settings.journalDateFormatLabel': 'Formato de data do diário',
   'settings.journalDateFormatHelp':
     'Como os títulos do diário são exibidos. As páginas são sempre armazenadas como AAAA-MM-DD, então alterar isto nunca afeta os diários existentes.',

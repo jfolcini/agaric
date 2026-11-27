@@ -6,12 +6,14 @@ import {
   activePopover,
   activeSheet,
   chooseSelectOption,
+  closePageProperties,
   expect,
   getInvokeCalls,
   installIpcRecorder,
   ipc,
   navigateToView,
   openPage,
+  openPagePropertiesFromMenu,
   openSettingsTab,
   reopenPage,
   seedSearchBlocks,
@@ -141,8 +143,8 @@ test.describe('Boolean property @editor', () => {
     page,
   }) => {
     await openPage(page, 'Quick Notes')
-    await page.getByRole('button', { name: 'Page actions', exact: true }).click()
-    await page.getByRole('menuitem', { name: 'Add property', exact: true }).click()
+    const properties = await openPagePropertiesFromMenu(page)
+    await properties.getByRole('button', { name: 'Add property', exact: true }).click()
     const picker = activePopover(page)
     await picker.getByRole('textbox', { name: 'Search definitions' }).fill('billable')
     await picker.getByRole('button', { name: /^Create "billable"/ }).click()
@@ -154,6 +156,7 @@ test.describe('Boolean property @editor', () => {
     await expect(box).not.toBeChecked()
     await box.click()
     await expect(box).toBeChecked()
+    await closePageProperties(page)
 
     await reopenPage(page, 'Quick Notes')
     await page.getByRole('button', { name: 'Properties 1', exact: true }).click()

@@ -64,7 +64,7 @@ export interface PageHeaderMenuProps {
   onKebabOpenChange: (open: boolean) => void
   onAddAlias: () => void
   onAddTag: () => void
-  onAddProperty: () => void
+  onOpenProperties: () => void
   onToggleTemplate: () => void
   onToggleJournalTemplate: () => void
   onExport: () => void
@@ -134,7 +134,7 @@ function menuIds(f: MenuFlags): string[] {
   return [
     'addAlias',
     'addTag',
-    'addProperty',
+    'properties',
     'insertEmoji',
     'openOutline',
     ...(f.hasHistory ? ['pageHistory'] : []),
@@ -230,7 +230,7 @@ export function PageHeaderMenu({
   onKebabOpenChange,
   onAddAlias,
   onAddTag,
-  onAddProperty,
+  onOpenProperties,
   onToggleTemplate,
   onToggleJournalTemplate,
   onExport,
@@ -450,11 +450,11 @@ export function PageHeaderMenu({
         <button
           type="button"
           className={row}
-          onClick={onAddProperty}
-          {...menuItemProps('addProperty')}
+          onClick={onOpenProperties}
+          {...menuItemProps('properties')}
         >
           <Settings2 />
-          {t('pageHeader.menuAddProperty')}
+          {t('pageHeader.menuProperties')}
         </button>
         <button
           type="button"

@@ -27,7 +27,6 @@ test.describe('Smoke tests @boot', () => {
       'Search',
       'Tags',
       'Graph',
-      'Templates',
       'Sync',
       'Settings',
     ]
@@ -37,7 +36,7 @@ test.describe('Smoke tests @boot', () => {
     // Trash's name gains its item count.
     await expect(sidebar.getByRole('button', { name: /^Trash/ })).toBeVisible()
     // The rarely-used views open from the Pages header or Settings instead.
-    const movedLabels = ['Advanced query', 'Status', 'History']
+    const movedLabels = ['Advanced query', 'Templates', 'Status', 'History']
     for (const label of movedLabels) {
       await expect(sidebar.getByRole('button', { name: label, exact: true })).toHaveCount(0)
     }
