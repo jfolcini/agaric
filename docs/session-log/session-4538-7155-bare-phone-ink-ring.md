@@ -39,3 +39,4 @@ Round 2 of the UI review (#7155).
   - it screenshotted keyboard focus across six themes;
   - it fixed the stale ring description in `docs/UX.md` and `breadcrumb.tsx`.
 - Rings that bypass the utility do not follow the bare-phone rule: the editor row ring, the list cursor's `:has` ring, PropertyChip, PageSourceEditor, PropertyDefinitionsList and the toast close button. A tapped button never matches `:focus-visible`, so none showed in the tour. Left until one does.
+- The review bot noticed that moving the prefers-contrast outline into `@layer base` let the image caption field's `outline-none` win, leaving it with no focus cue at all; in normal mode it had none before either. It now uses `focus-ring-visible`, with a class test shown red without it.
