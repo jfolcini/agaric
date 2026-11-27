@@ -12,6 +12,9 @@
 /* A touch device no hardware keyboard has shown itself on (`useHasHardwareKeyboard`
  * writes `<html data-keyboard>`): no keys to move focus with, so no focus ring. */
 @custom-variant bare-touch (&:where([data-touch]:not([data-keyboard]) *));
+/* The keyboard moved focus last (`syncPointerAttribute`, `src/lib/input-modality.ts`),
+ * on a device that has a keyboard: a script-moved focus ring shows only then. */
+@custom-variant key-led (&:where(:root:not([data-pointer], [data-touch]:not([data-keyboard])) *));
 
 @theme inline {
   /* A bare `transition-*` runs at the Animations setting's speed (see the token utilities). */
