@@ -1,8 +1,7 @@
 /**
  * Interaction states (#7040, C5): every focusable control draws the one
  * keyboard ring, `focus-ring-visible` (opaque `--ring`, 3 px, 3:1 or more),
- * uncut by the box around it, and a selected block row is highlighted as a
- * whole, like the editing box and the cursor ring.
+ * uncut by the box around it.
  *
  * The ring is read from the computed outline: solid, 3 px, opaque, 2 px off
  * the control (a transparent gap, so an ink ring stays apart from an ink fill)
@@ -68,7 +67,7 @@ async function expectTheRing(target: Locator, offset = 2): Promise<void> {
     .toEqual({ focusVisible: true, style: 'solid', width: 3, offset, alpha: 1 })
 }
 
-test.describe('Interaction states: one keyboard ring, whole-row selection @pages @editor', () => {
+test.describe('Interaction states: one keyboard ring @pages @editor', () => {
   test.beforeEach(async ({ page }) => {
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await waitForBoot(page)
@@ -188,34 +187,6 @@ test.describe('Interaction states: one keyboard ring, whole-row selection @pages
       return clippers
     })
     expect(cut).toEqual([])
-  })
-
-  test('a selected task row is highlighted with its checkbox and chips', async ({ page }) => {
-    await openPage(page, 'Projects')
-    const rows = page.getByTestId('sortable-block')
-    for (const i of [0, 1]) {
-      await rows
-        .nth(i)
-        .getByTestId('block-static')
-        .click({ modifiers: ['Control'], position: { x: 6, y: 6 } })
-    }
-    const row = rows.nth(1)
-    const highlight = row.locator('.block-selected')
-    await expect(highlight).toHaveCount(1)
-    const box = await highlight.boundingBox()
-    for (const part of [
-      row.locator('[data-testid^="task-checkbox"]'),
-      row.getByTestId('block-metadata-row'),
-    ]) {
-      const p = await part.boundingBox()
-      expect(box, 'highlight').not.toBeNull()
-      expect(p, 'part').not.toBeNull()
-      if (box === null || p === null) return
-      expect(p.x).toBeGreaterThanOrEqual(box.x)
-      expect(p.y).toBeGreaterThanOrEqual(box.y)
-      expect(p.x + p.width).toBeLessThanOrEqual(box.x + box.width)
-      expect(p.y + p.height).toBeLessThanOrEqual(box.y + box.height)
-    }
   })
 })
 

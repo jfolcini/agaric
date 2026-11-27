@@ -12,6 +12,7 @@ import type React from 'react'
 import { useCallback, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { FilterBar } from '@/components/filters/FilterBar'
 import { ChoiceValuePicker } from '@/components/properties/ChoiceValuePicker'
 import { PropertyValuePicker } from '@/components/properties/PropertyValuePicker'
 import { TagValuePicker } from '@/components/properties/TagValuePicker'
@@ -127,6 +128,8 @@ function ensureAddId(filter: AgendaFilter): AgendaFilterWithKey {
 export interface AgendaFilterBuilderProps {
   filters: AgendaFilter[]
   onFiltersChange: (filters: AgendaFilter[]) => void
+  /** The view's own controls, after Clear all. */
+  trailing?: React.ReactNode
 }
 
 // ---------------------------------------------------------------------------
@@ -343,6 +346,7 @@ function EditFilterPopover({
 export function AgendaFilterBuilder({
   filters,
   onFiltersChange,
+  trailing,
 }: AgendaFilterBuilderProps): React.ReactElement {
   const { t } = useTranslation()
   const existingDimensions = new Set(filters.map((f) => f.dimension))
@@ -402,98 +406,109 @@ export function AgendaFilterBuilder({
           : t('agendaFilter.filtersApplied', { count: filters.length })}
       </div>
 
-      {/* On touch a wrapped line sits far enough below the chips that its controls'
-          44 px hit areas do not take the chips' lower edge. */}
-      <div className="flex flex-wrap items-center gap-1.5 coarse:gap-y-4">
-        {filters.length > 0 && (
-          <ul aria-label={t('agendaFilter.appliedFilters')} className="contents list-none m-0 p-0">
-            {filters.map((rawFilter, idx) => {
-              // #757 — key by the stamped `_addId`, not `filter.dimension`:
-              // two `property` filters are a supported state, and duplicate
-              // keys made React recycle the wrong chip after edit/remove.
-              const filter = ensureAddId(rawFilter)
-              const isProperty = filter.dimension === 'property'
-              const pillLabel = isProperty
-                ? formatPropertyPill(filter.values)
-                : `${dimensionLabel(filter.dimension)}: ${filter.values.join(', ')}`
+      <FilterBar
+        hasChips={filters.length > 0}
+        chips={
+          <>
+            <ul
+              aria-label={t('agendaFilter.appliedFilters')}
+              className="contents list-none m-0 p-0"
+            >
+              {filters.map((rawFilter, idx) => {
+                // #757 — key by the stamped `_addId`, not `filter.dimension`:
+                // two `property` filters are a supported state, and duplicate
+                // keys made React recycle the wrong chip after edit/remove.
+                const filter = ensureAddId(rawFilter)
+                const isProperty = filter.dimension === 'property'
+                const pillLabel = isProperty
+                  ? formatPropertyPill(filter.values)
+                  : `${dimensionLabel(filter.dimension)}: ${filter.values.join(', ')}`
 
-              // #1746 — a valued property chip is subsumed (and inert) when a
-              // bare is-set chip exists for the same key. Grey/disable it and
-              // put the reason behind an ⓘ beside it; it stays removable.
-              const propEntry = isProperty ? parsePropertyEntry(filter.values) : null
-              const isSubsumed =
-                propEntry !== null && !propEntry.isSet && isSetPropertyKeys.has(propEntry.key)
-              const subsumedTitle = t('agendaFilter.valuedSubsumedByIsSet')
+                // #1746 — a valued property chip is subsumed (and inert) when a
+                // bare is-set chip exists for the same key. Grey/disable it and
+                // put the reason behind an ⓘ beside it; it stays removable.
+                const propEntry = isProperty ? parsePropertyEntry(filter.values) : null
+                const isSubsumed =
+                  propEntry !== null && !propEntry.isSet && isSetPropertyKeys.has(propEntry.key)
+                const subsumedTitle = t('agendaFilter.valuedSubsumedByIsSet')
 
-              return (
-                <li key={filter._addId} className="contents">
-                  {/* UX review Tier 1 item 7 — chip visual chrome aligned
-                      with the shared `FilterPill` primitive by adopting
-                      `Badge variant="secondary"`. The two-button structure
-                      (click-to-edit body + click-to-remove X) is preserved
-                      because FilterPill is remove-only; the visual style
-                      now matches the other filter surfaces. */}
-                  <Badge
-                    tone="secondary"
-                    data-slot="filter-pill"
-                    data-subsumed={isSubsumed ? 'true' : undefined}
-                    className={`filter-pill shrink-0 gap-0 p-0 text-xs${isSubsumed ? ' opacity-50' : ''}`}
-                    // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- Badge is a styled inline pill; the suggested fieldset/details/optgroup tags would break its layout and are wrong grouping primitives for an edit-filter pill
-                    role="group"
-                    aria-label={t('agendaFilter.editFilter', { label: pillLabel })}
-                  >
-                    <EditFilterPopover
-                      filter={filter}
-                      onUpdate={(values) => handleUpdate(idx, values)}
-                      onRemove={() => handleRemove(idx)}
+                return (
+                  <li key={filter._addId} className="contents">
+                    {/* UX review Tier 1 item 7 — chip visual chrome aligned
+                          with the shared `FilterPill` primitive by adopting
+                          `Badge variant="secondary"`. The two-button structure
+                          (click-to-edit body + click-to-remove X) is preserved
+                          because FilterPill is remove-only; the visual style
+                          now matches the other filter surfaces. */}
+                    <Badge
+                      tone="secondary"
+                      data-slot="filter-pill"
+                      data-subsumed={isSubsumed ? 'true' : undefined}
+                      className={`filter-pill shrink-0 gap-0 p-0 text-xs${isSubsumed ? ' opacity-50' : ''}`}
+                      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- Badge is a styled inline pill; the suggested fieldset/details/optgroup tags would break its layout and are wrong grouping primitives for an edit-filter pill
+                      role="group"
+                      aria-label={t('agendaFilter.editFilter', { label: pillLabel })}
                     >
+                      <EditFilterPopover
+                        filter={filter}
+                        onUpdate={(values) => handleUpdate(idx, values)}
+                        onRemove={() => handleRemove(idx)}
+                      >
+                        <button
+                          type="button"
+                          className="touch-hit-area flex items-center gap-1 rounded-l-full px-2 py-0.5 coarse:py-1 hover:bg-accent cursor-pointer focus-ring-visible"
+                          // #1746 — keep the chip clickable/removable, but flag it
+                          // as inert to AT, with the reason in its name.
+                          aria-disabled={isSubsumed || undefined}
+                          aria-label={
+                            isSubsumed
+                              ? `${t('agendaFilter.editFilter', { label: pillLabel })} — ${subsumedTitle}`
+                              : t('agendaFilter.editFilter', { label: pillLabel })
+                          }
+                        >
+                          {isProperty ? (
+                            <span>{pillLabel}</span>
+                          ) : (
+                            <>
+                              <span className="font-medium">
+                                {dimensionLabel(filter.dimension)}:
+                              </span>
+                              <span>{filter.values.join(', ')}</span>
+                            </>
+                          )}
+                        </button>
+                      </EditFilterPopover>
                       <button
                         type="button"
-                        className="touch-hit-area flex items-center gap-1 rounded-l-full px-2 py-0.5 coarse:py-1 hover:bg-accent cursor-pointer focus-ring-visible"
-                        // #1746 — keep the chip clickable/removable, but flag it
-                        // as inert to AT, with the reason in its name.
-                        aria-disabled={isSubsumed || undefined}
-                        aria-label={
-                          isSubsumed
-                            ? `${t('agendaFilter.editFilter', { label: pillLabel })} — ${subsumedTitle}`
-                            : t('agendaFilter.editFilter', { label: pillLabel })
-                        }
+                        className="ml-0.5 inline-flex items-center justify-center rounded-sm p-0.5 hover:bg-muted active:bg-muted active:scale-95 focus-ring-visible touch-hit-area"
+                        onClick={() => handleRemove(idx)}
+                        aria-label={t('agendaFilter.removeFilterLabel', {
+                          label: isProperty ? pillLabel : dimensionLabel(filter.dimension),
+                        })}
                       >
-                        {isProperty ? (
-                          <span>{pillLabel}</span>
-                        ) : (
-                          <>
-                            <span className="font-medium">{dimensionLabel(filter.dimension)}:</span>
-                            <span>{filter.values.join(', ')}</span>
-                          </>
-                        )}
+                        <X className="h-3 w-3 coarse:size-3.5" />
                       </button>
-                    </EditFilterPopover>
-                    <button
-                      type="button"
-                      className="ml-0.5 inline-flex items-center justify-center rounded-sm p-0.5 hover:bg-muted active:bg-muted active:scale-95 focus-ring-visible touch-hit-area"
-                      onClick={() => handleRemove(idx)}
-                      aria-label={t('agendaFilter.removeFilterLabel', {
-                        label: isProperty ? pillLabel : dimensionLabel(filter.dimension),
-                      })}
-                    >
-                      <X className="h-3 w-3 coarse:size-3.5" />
-                    </button>
-                  </Badge>
-                  {isSubsumed && (
-                    <InfoPopover
-                      variant="icon"
-                      ariaLabel={t('agendaFilter.subsumedInfoLabel', { label: pillLabel })}
-                      content={subsumedTitle}
-                    />
-                  )}
-                </li>
-              )
-            })}
-          </ul>
-        )}
-
-        {filters.length > 0 && (
+                    </Badge>
+                    {isSubsumed && (
+                      <InfoPopover
+                        variant="icon"
+                        ariaLabel={t('agendaFilter.subsumedInfoLabel', { label: pillLabel })}
+                        content={subsumedTitle}
+                      />
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+            {filters.length >= 2 && (
+              <span className="shrink-0 text-xs text-muted-foreground" aria-live="polite">
+                {t('agendaFilter.combinedWithAnd')}
+              </span>
+            )}
+          </>
+        }
+        addFilter={<AddFilterPopover existingDimensions={existingDimensions} onAdd={handleAdd} />}
+        clearAll={
           <Button
             variant="ghost"
             size="sm"
@@ -504,16 +519,9 @@ export function AgendaFilterBuilder({
             <X className="mr-0.5" />
             {t('agendaFilter.clearAll')}
           </Button>
-        )}
-
-        <AddFilterPopover existingDimensions={existingDimensions} onAdd={handleAdd} />
-
-        {filters.length >= 2 && (
-          <span className="shrink-0 text-xs text-muted-foreground" aria-live="polite">
-            {t('agendaFilter.combinedWithAnd')}
-          </span>
-        )}
-      </div>
+        }
+        trailing={trailing}
+      />
     </fieldset>
   )
 }

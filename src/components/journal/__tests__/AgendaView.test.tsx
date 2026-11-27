@@ -19,6 +19,7 @@
  */
 
 import { act, render, screen, waitFor } from '@testing-library/react'
+import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -72,7 +73,11 @@ const { filterChangeRef } = vi.hoisted(() => ({
 }))
 
 vi.mock('@/components/agenda/AgendaFilterBuilder', () => ({
-  AgendaFilterBuilder: (props: { filters: unknown[]; onFiltersChange: unknown }) => {
+  AgendaFilterBuilder: (props: {
+    filters: unknown[]
+    onFiltersChange: unknown
+    trailing?: React.ReactNode
+  }) => {
     filterChangeRef.current = props.onFiltersChange as (filters: unknown[]) => void
     return (
       <div
@@ -80,6 +85,7 @@ vi.mock('@/components/agenda/AgendaFilterBuilder', () => ({
         data-filter-count={Array.isArray(props.filters) ? props.filters.length : 0}
       >
         AgendaFilterBuilder
+        {props.trailing}
       </div>
     )
   },

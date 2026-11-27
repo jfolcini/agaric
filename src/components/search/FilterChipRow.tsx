@@ -15,6 +15,7 @@ import type React from 'react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { FilterBar } from '@/components/filters/FilterBar'
 import { FilterPill } from '@/components/ui/filter-pill'
 import type { FilterToken } from '@/lib/search-query'
 import { tokenKey, tokenSource } from '@/lib/search-query'
@@ -24,8 +25,7 @@ export interface FilterChipRowProps {
   filters: FilterToken[]
   onRemove: (index: number) => void
   onClearAll: () => void
-  /** Optional trailing slot (e.g. the Add filter button). */
-  trailing?: React.ReactNode
+  addFilter?: React.ReactNode
 }
 
 function labelFor(t: FilterToken): string {
@@ -48,7 +48,7 @@ export function FilterChipRow({
   filters,
   onRemove,
   onClearAll,
-  trailing,
+  addFilter,
 }: FilterChipRowProps): React.ReactElement | null {
   const { t } = useTranslation()
   const hasFilters = filters.length > 0
@@ -84,74 +84,76 @@ export function FilterChipRow({
       clearTimeout(timer)
     }
   }, [errorMessage])
-  if (!hasFilters && !trailing) return null
+  if (!hasFilters && !addFilter) return null
 
   return (
     <fieldset
       className={cn(
         // `min-w-0` resets the fieldset's UA `min-inline-size: min-content`.
-        'flex min-w-0 flex-wrap items-center gap-2',
+        'min-w-0',
         hasFilters && 'rounded-lg border bg-muted/40 p-2',
       )}
       data-testid="filter-chip-bar"
       aria-label={t('search.filtersActive')}
     >
-      {filters.map((token, index) => {
-        const label = labelFor(token)
-        const isInvalid = token.kind === 'invalid'
-        const error = token.kind === 'invalid' ? token.error : undefined
-        // Invalid chip styling: red border + aria-invalid + tooltip
-        // Carrying the typed error. Matches chip pattern.
-        const invalidClass = isInvalid
-          ? 'border-destructive/60 bg-destructive/10 text-destructive aria-invalid:border-destructive'
-          : undefined
-        return (
-          <FilterPill
-            key={tokenKey(token)}
-            label={label}
-            removeAriaLabel={t('search.removeFilter', { token: label })}
-            onRemove={() => onRemove(index)}
-            // Keeps the search input focused: its blur closes the history
-            // dropdown above, which moves the pill from under the pointer
-            // before the click on its remove button.
+      <FilterBar
+        hasChips={hasFilters}
+        chips={filters.map((token, index) => {
+          const label = labelFor(token)
+          const isInvalid = token.kind === 'invalid'
+          const error = token.kind === 'invalid' ? token.error : undefined
+          // Invalid chip styling: red border + aria-invalid + tooltip
+          // Carrying the typed error. Matches chip pattern.
+          const invalidClass = isInvalid
+            ? 'border-destructive/60 bg-destructive/10 text-destructive aria-invalid:border-destructive'
+            : undefined
+          return (
+            <FilterPill
+              key={tokenKey(token)}
+              label={label}
+              removeAriaLabel={t('search.removeFilter', { token: label })}
+              onRemove={() => onRemove(index)}
+              // Keeps the search input focused: its blur closes the history
+              // dropdown above, which moves the pill from under the pointer
+              // before the click on its remove button.
+              onMouseDown={(e) => e.preventDefault()}
+              // Thread aria-invalid to the Badge so its `aria-invalid:border-destructive`
+              // variant goes live. The error itself shows in the alert below.
+              {...(isInvalid ? { 'aria-invalid': true } : {})}
+              groupAriaLabel={
+                isInvalid
+                  ? // Accessible name carries the parser error, not just "invalid".
+                    t('search.invalidFilterWithError', { label, error: error ?? '' })
+                  : t('search.filterGroupLabel', { value: label })
+              }
+              {...(invalidClass ? { className: invalidClass } : {})}
+            />
+          )
+        })}
+        addFilter={addFilter}
+        clearAll={
+          <button
+            type="button"
+            onClick={onClearAll}
+            // Same reason as the pills' onMouseDown above.
             onMouseDown={(e) => e.preventDefault()}
-            // Thread aria-invalid to the Badge so its `aria-invalid:border-destructive`
-            // variant goes live. The error itself shows in the alert below.
-            {...(isInvalid ? { 'aria-invalid': true } : {})}
-            groupAriaLabel={
-              isInvalid
-                ? // Accessible name carries the parser error, not just "invalid".
-                  t('search.invalidFilterWithError', { label, error: error ?? '' })
-                : t('search.filterGroupLabel', { value: label })
-            }
-            {...(invalidClass ? { className: invalidClass } : {})}
-          />
-        )
-      })}
-      {trailing}
+            className="text-xs text-muted-foreground hover:text-foreground underline rounded-sm focus-ring-visible"
+          >
+            {t('search.clearAll')}
+          </button>
+        }
+      />
       {/* Shared visible + programmatic error surface for invalid chips.
           `role="alert"` announces newly-invalid filters (matches InPageFind's
-          regex-error region). `basis-full` drops it onto its own line within
-          the flex-wrap bar so it never squeezes the chips. */}
+          regex-error region). */}
       {settledErrorMessage !== '' && (
         <p
           role="alert"
           data-testid="filter-chip-errors"
-          className="basis-full w-full m-0 text-xs text-destructive"
+          className="mt-1.5 mb-0 text-xs text-destructive"
         >
           {settledErrorMessage}
         </p>
-      )}
-      {hasFilters && (
-        <button
-          type="button"
-          onClick={onClearAll}
-          // Same reason as the pills' onMouseDown above.
-          onMouseDown={(e) => e.preventDefault()}
-          className="text-xs text-muted-foreground hover:text-foreground underline ml-1 rounded-sm focus-ring-visible"
-        >
-          {t('search.clearAll')}
-        </button>
       )}
     </fieldset>
   )

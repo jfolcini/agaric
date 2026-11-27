@@ -529,6 +529,11 @@ export async function expectNoHorizontalOverflow(
 // Query that targets content inside a Radix overlay.
 // ---------------------------------------------------------------------------
 
+/** The checked multi-select checkboxes under `scope`: a selected block shows only its checkbox. */
+export function selectedCheckboxes(scope: Page | Locator): Locator {
+  return scope.getByRole('checkbox', { name: 'Select block', checked: true })
+}
+
 /** Active Radix Dialog content (data-slot="dialog-content"). */
 export function activeDialog(page: Page): Locator {
   return page.locator('[data-slot="dialog-content"]').last()

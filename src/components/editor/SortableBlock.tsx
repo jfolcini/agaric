@@ -397,9 +397,11 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
       )}
 
       {/* ── Collapse chevron — out of flow, in the text box's inset just left
-            of the first glyph (`--block-hang`), on the first line ── */}
+            of the first glyph (`--block-hang`), on the first line. A touch
+            row's selection checkbox sits in flow before the text and moves it
+            right by its touch-target slot and the gap, so the chevron moves with it. ── */}
       {hasChildren && !chevronAtRowEnd && (
-        <div className="pointer-events-none absolute top-0 z-10 left-[calc(var(--block-hang)-1rem)] flex min-h-block-line items-center">
+        <div className="pointer-events-none absolute top-0 z-10 left-[calc(var(--block-hang)-1rem)] [.touch-select-slot~&]:left-[calc(var(--block-hang)-1rem+var(--touch-target)+var(--block-gap))] flex min-h-block-line items-center">
           <BlockCollapseControl
             blockId={blockId}
             isCollapsed={isCollapsed}
@@ -410,18 +412,18 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
       )}
 
       {/* The row's frame: the checkbox, the text and the chips under it. It
-            draws the editing box while the block is edited, the multi-select
-            highlight, and the cursor row's ring. The ring shows on `:focus`
+            draws the editing box while the block is edited and the cursor
+            row's ring; a selected block shows only its checked selection
+            checkbox. The ring shows on `:focus`
             rather than `:focus-visible`: Chromium does not count a Ctrl chord
             as keyboard use, so after a click into a block, Ctrl+Space and
-            Ctrl+Arrow would move an unmarked cursor. All three inset: on a
+            Ctrl+Arrow would move an unmarked cursor. Both inset: on a
             phone the frame starts at the column's edge, which cuts off a ring
             drawn outside it. */}
       <div
         className={cn(
           'flex flex-1 min-w-0 items-start gap-(--block-gap) rounded-md ring-inset group-focus/row:ring-[3px] group-focus/row:ring-ring',
           isFocused && 'block-editing',
-          isSelected && 'block-selected',
           // On a phone, at every depth, the frame moves right, its content
           // where it was: a top-level frame would hang to the screen's edge on
           // the left. On the right it stops at the pane's padding, as far from
