@@ -1926,7 +1926,7 @@ pub(super) fn dial_addr(
     addr
 }
 
-/// What a dial that ran out of its budget reports.
+/// What a dial that ran out of its budget reports, and how loudly it logs.
 ///
 /// #4299: a timeout is ambiguous by construction — a sleeping peer and a LAN
 /// swallowed by a tunnel produce the same silence, and `dial_timeout_message`
@@ -1945,11 +1945,20 @@ fn dial_timeout_report(
         && !mdns_is_reaching_us(mdns_seen_at)
         && !peer_pulled_from_us_recently(ctx.scheduler, peer_refs, peer_id);
     if away {
+        // Retried every backoff cycle for as long as the peer is away: a warning
+        // per retry buried every other warning in the log.
+        tracing::debug!(peer_id, "away peer did not answer the dial");
         return (
             PEER_AWAY_MESSAGE.to_owned(),
             Some(ReportAs::Code(SyncErrorCode::PeerAway)),
         );
     }
+    tracing::warn!(
+        peer_id,
+        candidates = peer.addresses.len(),
+        timeout_ms = ctx.scheduler.connect_timeout.as_millis(),
+        "peer did not answer the dial within the connect budget"
+    );
     let message = dial_timeout_message(
         peer_id,
         ctx.endpoint,
@@ -1997,12 +2006,6 @@ async fn connect_to_peer(
     };
     let conn = match dialed {
         Err(_elapsed) => {
-            tracing::warn!(
-                peer_id,
-                candidates = peer.addresses.len(),
-                timeout_ms = ctx.scheduler.connect_timeout.as_millis(),
-                "peer did not answer the dial within the connect budget"
-            );
             let (message, report_as) = dial_timeout_report(ctx, peer, peer_refs, mdns_seen_at);
             record_initiator_failure(
                 ctx.scheduler,

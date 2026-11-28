@@ -2699,9 +2699,31 @@ async fn a_snapshot_from_a_peer_that_forked_its_own_history_is_coded_7065() {
 /// than a toast. Announced, still pulling from us, or never paired (the host a
 /// pairing window scanned), the same timeout stays an uncoded failure, reported
 /// once per streak.
+///
+/// Only the failure warns in the log: an away peer is retried every backoff cycle
+/// for as long as it is away, and a warning per retry buried every other warning.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_dial_timeout_is_away_only_for_a_silent_peer_not_pulling_from_us_6523() {
     const PEER: &str = "PEER_AWAY_6523";
+
+    /// Mirrors `snapshot::tests::WarnCapture` (test helper duplication is intentional).
+    #[derive(Clone, Default)]
+    struct LogCapture(Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for LogCapture {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogCapture {
+        type Writer = LogCapture;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
 
     /// A `peer_refs` row for the peer, last streamed to at `streamed_at`.
     fn paired(streamed_at: Option<i64>) -> Vec<PeerRef> {
@@ -2710,11 +2732,15 @@ async fn a_dial_timeout_is_away_only_for_a_silent_peer_not_pulling_from_us_6523(
         vec![peer_ref]
     }
 
-    /// Two dial cycles against an unreachable peer; the errors they reported.
+    /// Two dial cycles against an unreachable peer; the errors they reported, and
+    /// how many of their timeouts were logged as warnings.
     async fn two_cycles(
         mdns_seen_at: Option<tokio::time::Instant>,
         refs: Vec<PeerRef>,
-    ) -> Vec<(Option<crate::sync_events::SyncErrorCode>, Option<bool>)> {
+    ) -> (
+        Vec<(Option<crate::sync_events::SyncErrorCode>, Option<bool>)>,
+        usize,
+    ) {
         let (pool, _dir) = test_pool().await;
         let materializer = Materializer::new(pool.clone());
         let scheduler = SyncScheduler::new().with_connect_timeout(UNANSWERED_DIAL_BUDGET);
@@ -2735,41 +2761,56 @@ async fn a_dial_timeout_is_away_only_for_a_silent_peer_not_pulling_from_us_6523(
             bind_prefix_len: None,
             relay_url: None,
         };
-        for _ in 0..2 {
-            scheduler.expire_backoff(PEER);
-            tokio::time::timeout(
-                std::time::Duration::from_secs(60),
-                try_sync_with_peer(&ctx, &peer, &refs, mdns_seen_at),
-            )
-            .await
-            .expect("the dial exhausts its own budget well inside the test timeout");
+        let log = LogCapture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(log.clone())
+            .with_ansi(false)
+            .finish();
+        {
+            // The block_on thread polls the dial, so its thread-local default sees the warning.
+            let _guard = tracing::subscriber::set_default(subscriber);
+            for _ in 0..2 {
+                scheduler.expire_backoff(PEER);
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(60),
+                    try_sync_with_peer(&ctx, &peer, &refs, mdns_seen_at),
+                )
+                .await
+                .expect("the dial exhausts its own budget well inside the test timeout");
+            }
         }
         assert_eq!(scheduler.failure_count(PEER), 2, "both cycles are booked");
         materializer.shutdown();
-        reported_errors(&sink.events())
+        let logged = String::from_utf8_lossy(&log.0.lock().unwrap()).into_owned();
+        let timeout_warnings = logged.matches("did not answer the dial").count();
+        (reported_errors(&sink.events()), timeout_warnings)
     }
 
     let away = (Some(crate::sync_events::SyncErrorCode::PeerAway), None);
     assert_eq!(
         two_cycles(None, paired(None)).await,
-        vec![away, away],
-        "a silent peer that is not pulling from us is away, on every attempt"
+        (vec![away, away], 0),
+        "a silent peer that is not pulling from us is away, on every attempt, and \
+         waiting for it is no warning"
     );
     assert_eq!(
         two_cycles(Some(tokio::time::Instant::now()), paired(None)).await,
-        vec![(None, None)],
-        "a peer mDNS announces is on the network: its timeout is a failure, told once"
+        (vec![(None, None)], 2),
+        "a peer mDNS announces is on the network: its timeout is a failure, told once \
+         and warned on every attempt"
     );
     assert_eq!(
         two_cycles(None, paired(Some(agaric_store::db::now_ms()))).await,
-        vec![(None, None)],
-        "a peer still pulling from us is not away: its timeout is a failure, told once"
+        (vec![(None, None)], 2),
+        "a peer still pulling from us is not away: its timeout is a failure, told once \
+         and warned on every attempt"
     );
     assert_eq!(
         two_cycles(None, vec![]).await,
-        vec![(None, None)],
+        (vec![(None, None)], 2),
         "a peer this device never paired with is no device to wait for: its timeout \
-         is a failure, told once"
+         is a failure, told once and warned on every attempt"
     );
 }
 
