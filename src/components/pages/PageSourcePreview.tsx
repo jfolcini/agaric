@@ -167,7 +167,7 @@ export function PageSourcePreview({ lines }: { lines: SourceLines }): React.Reac
             key={i}
             data-testid="page-source-preview-block"
             className="flex flex-wrap items-baseline gap-x-2 rounded-md px-3 py-1 leading-normal"
-            style={{ marginInlineStart: `${block.depth * 1.5}rem` }}
+            style={{ marginInlineStart: `calc(var(--indent-width) * ${block.depth})` }}
           >
             {block.taskState !== null && (
               <span className="self-center">

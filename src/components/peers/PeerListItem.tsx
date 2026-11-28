@@ -290,7 +290,7 @@ export function PeerListItem({
               </IconButton>
             </PopoverTrigger>
             <PopoverContent
-              className="w-64 max-w-[calc(100vw-2rem)] p-3 space-y-2"
+              className="w-64 max-w-[calc(100vw-2rem)] space-y-2"
               align="start"
               aria-label={t('device.editAddressPopoverLabel')}
             >

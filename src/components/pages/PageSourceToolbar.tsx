@@ -340,7 +340,7 @@ export function PageSourceToolbar({
         renderItem={renderItem}
         label={t('toolbar.formatting')}
         testId="page-source-toolbar"
-        className="sticky -top-4 z-10 bg-background md:-top-6"
+        className="sticky -top-(--pane-gutter) z-10 bg-background"
       />
       {menu !== null && (
         <BlockContextMenu

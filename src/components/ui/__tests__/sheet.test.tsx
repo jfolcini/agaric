@@ -148,9 +148,9 @@ describe('SheetContent base classes', () => {
       </Sheet>,
     )
     const dialog = screen.getByRole('dialog')
-    // `md`, where the view's own gutter widens, not `sm`: from 640 to 767 px
-    // a sheet's text would sit 24 px in against a 16 px view gutter.
-    expect(dialog).toHaveClass('flex', 'flex-col', 'overflow-hidden', 'p-4', 'md:p-6')
+    // The view's own gutter, which widens at `md`; a `sm:` step would sit a
+    // sheet's text 24 px in against a 16 px view gutter from 640 to 767 px.
+    expect(dialog).toHaveClass('flex', 'flex-col', 'overflow-hidden', 'p-(--pane-gutter)')
     expect(dialog).not.toHaveClass('sm:p-6')
   })
 
@@ -251,7 +251,7 @@ describe('SheetBody', () => {
     // assert the height contract.
     const scrollRoot = child.closest('[data-slot="sheet-body"]')
     expect(scrollRoot).not.toBeNull()
-    expect(scrollRoot).toHaveClass('flex-1', 'min-h-0', '-mx-4', 'md:-mx-6')
+    expect(scrollRoot).toHaveClass('flex-1', 'min-h-0', '-mx-(--pane-gutter)')
   })
 
   it('viewport carries the shared gutter and Radix width workaround classes', () => {
@@ -270,7 +270,7 @@ describe('SheetBody', () => {
     const child = screen.getByTestId('body-child')
     const viewport = child.closest('[data-slot="scroll-area-viewport"]')
     expect(viewport).not.toBeNull()
-    expect(viewport).toHaveClass('px-4', 'md:px-6', '[&>div]:!block')
+    expect(viewport).toHaveClass('px-(--pane-gutter)', '[&>div]:!block')
   })
 
   it('SheetBody forwards ref to the ScrollArea root', () => {

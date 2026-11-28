@@ -1890,7 +1890,7 @@ describe('App', () => {
       // (see its own test) — reads the variable rather than `env()`
       // directly, so a future override point never has to hunt call sites.
       expect(cls).toContain('var(--safe-area-bottom)')
-      expect(cls).toContain('pb-[calc(1rem+var(--safe-area-bottom))]')
+      expect(cls).toContain('pb-[calc(var(--pane-gutter)+var(--safe-area-bottom))]')
       expect(cls).not.toContain('env(safe-area-inset-bottom)')
     })
   })

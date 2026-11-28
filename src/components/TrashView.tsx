@@ -14,7 +14,7 @@
  */
 
 import { type InfiniteData, keepPreviousData, useInfiniteQuery } from '@tanstack/react-query'
-import { MoreVertical, RotateCcw, Search, Trash2 } from 'lucide-react'
+import { MoreVertical, RotateCcw, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -534,18 +534,16 @@ export function TrashView(): React.ReactElement {
  with proper touch-target + focus-ring + a11y per AGENTS.md. */}
       {blocks.length > 0 && (
         <div className="flex items-center gap-2">
-          <div className="relative min-w-0 flex-1">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <SearchInput
-              placeholder={t('trash.filterPlaceholder')}
-              aria-label={t('trash.filterPlaceholder')}
-              value={filterText}
-              onChange={(e) => setFilterText(e.target.value)}
-              className="pl-9"
-              data-testid="trash-filter-input"
-              clearAriaLabelKey="trash.searchClear"
-            />
-          </div>
+          <SearchInput
+            searchIcon
+            wrapperClassName="min-w-0 flex-1"
+            placeholder={t('trash.filterPlaceholder')}
+            aria-label={t('trash.filterPlaceholder')}
+            value={filterText}
+            onChange={(e) => setFilterText(e.target.value)}
+            data-testid="trash-filter-input"
+            clearAriaLabelKey="trash.searchClear"
+          />
           {isMobile && (
             <MenuSheet
               open={moreMenuOpen}
@@ -602,7 +600,7 @@ export function TrashView(): React.ReactElement {
         <BatchActionToolbar
           selectedCount={selected.size}
           listRef={listRef}
-          className="trash-selection-toolbar gap-3 p-3"
+          className="trash-selection-toolbar"
           suppressRangeSelectHint
         >
           <Button variant="outline" size="sm" onClick={selectAll}>

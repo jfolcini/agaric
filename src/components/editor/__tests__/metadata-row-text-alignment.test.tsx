@@ -15,7 +15,7 @@
  * and `StaticBlock.test.tsx` never renders the metadata row. Both are rendered
  * for real here.
  *
- * It asserts the RELATIONSHIP, not the literal `px-3`. A test pinning `px-3`
+ * It asserts the RELATIONSHIP, not the literal inset. A test pinning the inset
  * on the row alone stays green if someone changes the TEXT's inset, which is
  * precisely the drift that produces the misalignment — the row would then be
  * "correct" against a value nothing else uses any more.
@@ -32,12 +32,12 @@
  * null query rather than an assertion.
  *
  * KNOWN GAP 1, stated rather than implied: this covers the unfocused path only.
- * The focused path insets its text via `.ProseMirror { @apply px-3 }` in
- * `index.css`, and happy-dom applies no stylesheet, so there is no rendered
+ * The focused path insets its text via `.ProseMirror { @apply px-(--block-inset) }`
+ * in `index.css`, and happy-dom applies no stylesheet, so there is no rendered
  * value to read. A change to that CSS rule alone would misalign the focused
- * state with nothing here going red. Keeping the two paths on the same value
- * is what makes one assertion meaningful for both; that coupling is asserted
- * by neither test nor type.
+ * state with nothing here going red. Both paths reading `--block-inset` is
+ * what makes one assertion meaningful for both; that coupling is asserted by
+ * neither test nor type.
  */
 
 import { render } from '@testing-library/react'

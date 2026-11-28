@@ -78,7 +78,7 @@ export function BatchActionToolbar({
       // Wraps: a phone cannot fit the actions on one line, and the clipped
       // ones (Pages' Bookmark and Delete) were unreachable.
       className={cn(
-        'flex flex-wrap items-center gap-2 rounded-lg border bg-muted/50 p-2',
+        'flex flex-wrap items-center gap-3 rounded-lg border bg-muted/50 p-3',
         className,
       )}
     >

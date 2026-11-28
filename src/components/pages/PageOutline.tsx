@@ -11,6 +11,7 @@ import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
 import { renderRichContent } from '@/components/RichContentRenderer'
+import { menuRowVariants } from '@/components/ui/menu-row'
 import {
   Sheet,
   SheetBody,
@@ -22,7 +23,6 @@ import {
 import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
 import { scrollElementIntoView } from '@/lib/scroll-into-view'
-import { cn } from '@/lib/utils'
 import type { FlatBlock } from '@/stores/page-blocks'
 import { usePageBlockStore } from '@/stores/page-blocks'
 
@@ -104,19 +104,16 @@ export function PageOutline({ open, onOpenChange, onCloseAutoFocus }: PageOutlin
                   <li key={h.blockId} style={{ paddingLeft: `${(h.level - 1) * 12}px` }}>
                     <button
                       type="button"
-                      className={cn(
-                        'w-full text-left text-sm truncate rounded px-2 py-1',
-                        'hover:bg-accent hover:text-accent-foreground',
-                        'focus-ring-visible focus-visible:-outline-offset-3',
-                        'transition-colors',
-                      )}
+                      className={menuRowVariants()}
                       onClick={() => handleClick(h.blockId)}
                     >
-                      {renderRichContent(h.text, {
-                        ...resolvers,
-                        inline: true,
-                        interactive: false,
-                      })}
+                      <span className="truncate">
+                        {renderRichContent(h.text, {
+                          ...resolvers,
+                          inline: true,
+                          interactive: false,
+                        })}
+                      </span>
                     </button>
                   </li>
                 ))}

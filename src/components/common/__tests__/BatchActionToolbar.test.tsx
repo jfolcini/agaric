@@ -44,7 +44,7 @@ describe('BatchActionToolbar', () => {
 
   it('applies custom className', () => {
     render(
-      <BatchActionToolbar listRef={NO_LIST} selectedCount={1} className="my-custom-class gap-3 p-3">
+      <BatchActionToolbar listRef={NO_LIST} selectedCount={1} className="my-custom-class">
         <button type="button">Action</button>
       </BatchActionToolbar>,
     )

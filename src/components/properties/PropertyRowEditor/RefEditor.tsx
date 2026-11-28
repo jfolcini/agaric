@@ -17,10 +17,12 @@ import type { RefPickerEditorState } from '@/components/properties/PropertyRowEd
 import { useRefTitle } from '@/components/properties/useRefTitle'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { menuRowVariants } from '@/components/ui/menu-row'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import type { PropertyRow } from '@/lib/bindings'
+import { cn } from '@/lib/utils'
 
 export interface RefEditorProps {
   prop: PropertyRow
@@ -62,7 +64,7 @@ export function RefEditor({ prop, state, ariaLabel, hasCreateNewPage }: RefEdito
         </Button>
       </PopoverTrigger>
       <PopoverContent
-        className="w-56 space-y-1 p-2 max-w-[calc(100vw-2rem)]"
+        className="w-56 space-y-1 max-w-[calc(100vw-2rem)]"
         aria-label={t('block.refPickerLabel')}
       >
         <Input
@@ -147,7 +149,7 @@ function RefPageRow({ content, saving, disabled, onClick }: RefPageRowProps) {
   return (
     <button
       type="button"
-      className="rounded px-2 py-1 text-left text-xs transition-colors hover:bg-accent truncate flex items-center gap-1.5 disabled:opacity-60 focus-ring-visible"
+      className={cn(menuRowVariants(), 'text-xs')}
       onClick={onClick}
       disabled={disabled}
       aria-busy={saving}

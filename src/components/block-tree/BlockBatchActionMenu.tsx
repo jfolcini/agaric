@@ -61,7 +61,7 @@ export function BlockBatchActionMenu({
       <div
         // Above the block list, which stacks its rows at z-10, and opaque: rows
         // scroll under it and must not show through.
-        className="batch-toolbar sticky top-0 z-20 flex flex-wrap items-center gap-2 rounded-lg border bg-background px-3 py-2 mb-2 shadow-(--shadow-resting)"
+        className="batch-toolbar sticky top-0 z-20 flex flex-wrap items-center gap-3 rounded-lg border bg-background p-3 mb-2 shadow-(--shadow-resting)"
         data-testid="batch-toolbar"
       >
         <span className="text-sm font-medium tabular-nums">

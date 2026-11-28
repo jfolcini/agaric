@@ -10,6 +10,7 @@ import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { renderRichContent } from '@/components/RichContentRenderer'
+import { menuRowVariants } from '@/components/ui/menu-row'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
 import { isTabKey } from '@/lib/keyboard-config/keys'
@@ -136,15 +137,18 @@ export function TemplatePicker({
             <button
               key={tp.id}
               type="button"
-              className="w-full text-left rounded-sm px-2 py-1.5 text-sm hover:bg-accent focus-ring-visible focus-visible:-outline-offset-3 transition-colors touch-target"
+              className={menuRowVariants()}
               onClick={() => onSelect(tp.id)}
             >
-              <span className="font-medium">{tp.content || t('block.untitled')}</span>
-              {tp.preview && (
-                <span className="block text-xs text-muted-foreground truncate">
-                  {renderRichContent(tp.preview, { inline: true, ...richCallbacks })}
-                </span>
-              )}
+              {/* One flex item, so the preview stacks under the title and truncates. */}
+              <span className="min-w-0">
+                <span className="font-medium">{tp.content || t('block.untitled')}</span>
+                {tp.preview && (
+                  <span className="block text-xs text-muted-foreground truncate">
+                    {renderRichContent(tp.preview, { inline: true, ...richCallbacks })}
+                  </span>
+                )}
+              </span>
             </button>
           ))}
         </ScrollArea>

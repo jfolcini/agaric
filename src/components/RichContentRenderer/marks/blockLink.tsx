@@ -80,7 +80,7 @@ export function BrokenBlockLink({
       </PopoverTrigger>
       <PopoverContent
         aria-labelledby={chipId}
-        className="w-auto max-w-xs space-y-2 p-3 text-sm"
+        className="w-auto max-w-xs space-y-2 text-sm"
         {...(focusEditor === undefined ? {} : { 'data-editor-portal': '' })}
         // Removing the link moves the focus to the block's row.
         onCloseAutoFocus={(e) => {

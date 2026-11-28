@@ -117,7 +117,7 @@ describe('#3336 mobile command palette shell', () => {
       'flex-col',
       'p-0',
       'top-[12dvh]',
-      'left-[50%]',
+      'left-1/2',
     )
     expect(palette).not.toHaveClass('bottom-0')
     expect(palette).not.toHaveClass('inset-x-0')

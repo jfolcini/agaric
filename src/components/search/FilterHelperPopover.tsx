@@ -269,7 +269,7 @@ export function FilterHelperPopover({
       </PopoverTrigger>
       <PopoverContent
         align="start"
-        className={cn('w-72', mode === 'menu' ? 'p-1' : 'p-3')}
+        className={cn('w-72', mode === 'menu' && 'p-1')}
         aria-label={t('search.addFilter')}
       >
         {mode === 'menu' && (

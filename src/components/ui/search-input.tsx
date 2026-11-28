@@ -22,7 +22,7 @@
  *    legitimate `onChange` reader.
  */
 
-import { X } from 'lucide-react'
+import { Search, X } from 'lucide-react'
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -51,6 +51,8 @@ export interface SearchInputProps extends Omit<React.ComponentProps<'input'>, 'o
   clearAriaLabelKey?: string
   /** Extra className for the outer wrapper (positioning / width). Use `className` for the input itself. */
   wrapperClassName?: string
+  /** Draws a magnifier at the start of the field. */
+  searchIcon?: boolean
   ref?: React.Ref<HTMLInputElement>
 }
 
@@ -62,6 +64,7 @@ const SearchInput = ({
   className,
   wrapperClassName,
   clearAriaLabelKey = 'action.clear',
+  searchIcon,
   ...props
 }: SearchInputProps) => {
   const { t } = useTranslation()
@@ -103,9 +106,16 @@ const SearchInput = ({
         type={props.type ?? 'text'}
         value={value}
         onChange={onChange}
-        className={cn(hasValue && 'pr-10', className)}
+        // pl-9 is the icon's left-3 inset, its 16 px, and a gap-2.
+        className={cn(searchIcon && 'pl-9', hasValue && 'pr-10', className)}
         {...props}
       />
+      {searchIcon && (
+        <Search
+          aria-hidden="true"
+          className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
+        />
+      )}
       {hasValue && (
         <button
           type="button"

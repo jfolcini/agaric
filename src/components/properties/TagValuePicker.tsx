@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Input } from '@/components/ui/input'
+import { menuRowVariants } from '@/components/ui/menu-row'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { unwrap } from '@/lib/app-error'
@@ -210,17 +211,14 @@ export function TagValuePicker({
                   role="option"
                   tabIndex={-1}
                   aria-selected={idx === activeIndex}
-                  className={cn(
-                    'cursor-pointer rounded-sm px-2 py-1.5 text-sm hover:bg-accent',
-                    idx === activeIndex && 'bg-accent',
-                  )}
+                  className={cn(menuRowVariants(), idx === activeIndex && 'bg-accent')}
                   onClick={() => handleSelect(tag)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') handleSelect(tag)
                   }}
                 >
                   {tag.name}
-                  <span className="ml-1 text-muted-foreground">({tag.usage_count})</span>
+                  <span className="text-muted-foreground">({tag.usage_count})</span>
                 </div>
               ))}
             </div>

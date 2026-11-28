@@ -15,6 +15,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
+import { menuRowVariants } from '@/components/ui/menu-row'
 import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
@@ -128,7 +129,7 @@ export function SourcePageFilter({
             : t('sourceFilter.buttonLabel')}
         </Button>
       </PopoverTrigger>
-      <MenuPopoverContent className="p-2" align="start">
+      <MenuPopoverContent className="p-3" align="start">
         <div className="source-page-filter-content space-y-2">
           <Input
             placeholder={t('sourceFilter.searchPlaceholder')}
@@ -143,7 +144,7 @@ export function SourcePageFilter({
                 <button
                   key={page.pageId}
                   type="button"
-                  className="source-page-filter-item flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground focus-ring-visible"
+                  className={cn('source-page-filter-item', menuRowVariants())}
                   onClick={(e) => handlePageClick(e, page.pageId)}
                   onKeyDown={(e) => handlePageKeyDown(e, page.pageId)}
                 >

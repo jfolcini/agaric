@@ -563,7 +563,7 @@ export function AgendaResults({
             {hasMore && (
               <output
                 data-testid="agenda-partial-order-notice"
-                className="agenda-partial-order-notice block rounded-lg border border-alert-warning-border bg-alert-warning p-2 text-xs text-alert-warning-foreground"
+                className="agenda-partial-order-notice block rounded-lg border border-alert-warning-border bg-alert-warning p-3 text-xs text-alert-warning-foreground"
               >
                 {t('agenda.partialOrderNotice')}
               </output>
@@ -574,7 +574,7 @@ export function AgendaResults({
             ) : (
               <ScrollArea
                 viewportRef={scrollParentRef}
-                // pr-2.5 reserves room for the classic 10px scrollbar gutter so a
+                // pr-2 reserves room for ScrollArea's scrollbar (6 px, 8 px on touch) so a
                 // focused/selected row's full rounded border (the right side in
                 // particular) renders inside the viewport instead of being clipped
                 // under the scrollbar. The `<ul>` is a block child of the viewport,
@@ -586,7 +586,7 @@ export function AgendaResults({
                 // down the page, which is self-defeating. Nothing is clipped either
                 // way (`App.tsx` wraps the main content in a scroller), so this is
                 // about keeping the button where the user last saw it.
-                viewportClassName={`agenda-results-scroll pr-2.5 ${
+                viewportClassName={`agenda-results-scroll pr-2 ${
                   hasMore ? 'max-h-[calc(100dvh-300px)]' : 'max-h-[calc(100dvh-260px)]'
                 }`}
               >

@@ -804,7 +804,7 @@ function App() {
              */}
             {/* The hairline is the header's own (each is a centred column), so it runs
                 the column's width, not the window's. */}
-            <ViewHeaderOutletSlot className="px-4 md:px-6 pt-3 [&>*]:border-b [&>*]:border-border/40 [&>*]:pb-2" />
+            <ViewHeaderOutletSlot className="px-(--pane-gutter) pt-3 [&>*]:border-b [&>*]:border-border/40 [&>*]:pb-2" />
             <ScrollArea
               viewportRef={setMainContentViewport}
               className="flex-1"
@@ -814,25 +814,23 @@ function App() {
               // `scroll-pb-[env(…)]` extends the scroll end so keyboard
               // scroll-into-view stops short of the inset as well.
               // Where `QuickCaptureFab` shows, `--fab-clearance` keeps the last
-              // control clear of it (the `md:` copy outranks `md:p-6`), except
-              // where `keepsCaptureRoom` says not.
+              // control clear of it, except where `keepsCaptureRoom` says not.
               viewportClassName={cn(
-                'p-4 md:p-6 focus-ring-visible pb-[calc(1rem+var(--safe-area-bottom))] md:pb-[calc(1.5rem+var(--safe-area-bottom))] scroll-pb-[var(--safe-area-bottom)]',
+                'p-(--pane-gutter) focus-ring-visible pb-[calc(var(--pane-gutter)+var(--safe-area-bottom))] scroll-pb-[var(--safe-area-bottom)]',
                 shouldShowMobileChrome &&
                   keepsCaptureRoom(currentView) &&
-                  'pb-[calc(var(--fab-clearance)+var(--safe-area-bottom))] md:pb-[calc(var(--fab-clearance)+var(--safe-area-bottom))]',
+                  'pb-[calc(var(--fab-clearance)+var(--safe-area-bottom))]',
               )}
               data-slot="main-content"
             >
-              {/* The negative margins cancel the viewport's padding (`p-4`;
-                  `md:p-6` on a phone held sideways) so the header spans the
-                  pane as it does on desktop. A header holding the view's
-                  search field (`data-sticky-search`) keeps it at the top;
-                  sticky offsets count from inside that padding, hence the
+              {/* The negative margins cancel the viewport's padding so the
+                  header spans the pane as it does on desktop. A header holding
+                  the view's search field (`data-sticky-search`) keeps it at the
+                  top; sticky offsets count from inside that padding, hence the
                   negative `top`. */}
               <ViewHeaderOutletSlot
                 insideScroller
-                className="-mx-4 -mt-4 mb-4 border-b border-border/40 px-4 py-3 space-y-2 has-[[data-sticky-search]]:sticky has-[[data-sticky-search]]:-top-4 has-[[data-sticky-search]]:z-10 md:-mx-6 md:-mt-6 md:px-6 md:has-[[data-sticky-search]]:-top-6"
+                className="-mx-(--pane-gutter) -mt-(--pane-gutter) mb-4 border-b border-border/40 px-(--pane-gutter) py-3 space-y-2 has-[[data-sticky-search]]:sticky has-[[data-sticky-search]]:-top-(--pane-gutter) has-[[data-sticky-search]]:z-10"
               />
               <ViewToolbarSlot room={currentView === 'journal' || currentView === 'page-editor'} />
               <div

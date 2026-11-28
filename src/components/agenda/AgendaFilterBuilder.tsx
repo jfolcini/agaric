@@ -221,7 +221,7 @@ function AddFilterPopover({
           {t('agendaFilter.addFilter')}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-56 p-3 max-w-[calc(100vw-2rem)]">
+      <PopoverContent align="start" className="w-56 max-w-[calc(100vw-2rem)]">
         {step === 'pick-dimension' && (
           // Each dimension item shows its description under its label so the
           // distinction between visually-similar dimensions (dueDate vs
@@ -316,7 +316,7 @@ function EditFilterPopover({
   return (
     <Popover open={open} onOpenChange={setOpen} sheetTitle={dimensionLabel(filter.dimension)}>
       <PopoverTrigger asChild>{children}</PopoverTrigger>
-      <PopoverContent align="start" className="w-56 p-3 max-w-[calc(100vw-2rem)]">
+      <PopoverContent align="start" className="w-56 max-w-[calc(100vw-2rem)]">
         <div className="flex flex-col gap-2">
           <p className="text-xs font-medium">{dimensionLabel(filter.dimension)}</p>
           <ValuePicker dimension={filter.dimension} selected={filter.values} onChange={onUpdate} />

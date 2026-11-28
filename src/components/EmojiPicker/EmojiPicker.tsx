@@ -549,7 +549,7 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
             {isLoading && (
               <p
                 data-testid="emoji-loading"
-                className="px-3 py-10 text-center text-sm text-muted-foreground"
+                className="px-3 py-8 text-center text-sm text-muted-foreground"
               >
                 {t('emojiPicker.loading')}
               </p>
@@ -557,7 +557,7 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
             {!isLoading && noResults && (
               <p
                 data-testid="emoji-no-results"
-                className="px-3 py-10 text-center text-sm text-muted-foreground"
+                className="px-3 py-8 text-center text-sm text-muted-foreground"
               >
                 {t('emojiPicker.noResults', { query: query.trim() })}
               </p>
