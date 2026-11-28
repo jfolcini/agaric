@@ -234,7 +234,9 @@ export function DayPageEditor({
         }
       />
       {onPhone && (
-        <div className="flex flex-wrap items-center gap-2 mb-2">
+        // The icons, not their 44 px buttons, on the content edges: the bookmark
+        // in the checkboxes' column, the ⋮ under the top bar's search icon.
+        <div className="flex flex-wrap items-center gap-2 mb-2 coarse:-mx-3">
           {actions}
           <div className="ml-auto">
             <MenuSheet

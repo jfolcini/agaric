@@ -75,6 +75,28 @@ test.describe('journal on a phone @journal @mobile', () => {
     await expect(page.getByText('Morning standup notes go here')).toBeVisible()
   })
 
+  test('the day’s bookmark sits in its checkboxes’ column, its ⋮ on the right content edge', async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    const day = page.locator('section[id^="journal-"]').first()
+    const iconBox = async (button: Locator) => {
+      const b = await button.locator('svg').first().boundingBox()
+      if (b == null) throw new Error('icon has no box')
+      return { left: Math.round(b.x), right: Math.round(b.x + b.width) }
+    }
+    const checkbox = await day.getByTestId('task-checkbox-todo').first().boundingBox()
+    if (checkbox == null) throw new Error('checkbox has no box')
+
+    const bookmark = await iconBox(
+      day.getByRole('button', { name: 'Bookmark this page', exact: true }),
+    )
+    expect(bookmark.left).toBe(Math.round(checkbox.x))
+    const menu = await iconBox(day.getByRole('button', { name: 'Page actions', exact: true }))
+    const search = await iconBox(appHeader(page).getByTestId('search-sheet-trigger'))
+    expect(menu.right).toBe(search.right)
+  })
+
   test('one View button opens Group by and Sort by in a sheet', async ({ page }) => {
     await waitForBoot(page)
     await pickMode(page, 'Agenda')
