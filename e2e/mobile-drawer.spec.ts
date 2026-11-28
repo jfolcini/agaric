@@ -33,20 +33,22 @@ test('the drawer opens from the header button, not from a left-edge swipe @mobil
   await expect(drawer).toHaveCount(0)
   await expect(page.getByTestId('sidebar-swipe-hint')).toHaveCount(0)
 
-  // The swipe starts in the gutter beside the day heading, on nothing that
-  // takes touches itself: block rows hang into the gutter (#5929).
-  const heading = page.getByRole('heading', { level: 1 }).first()
-  await expect(heading).toBeVisible()
-  const box = await heading.boundingBox()
-  const y = Math.round((box?.y ?? 0) + (box?.height ?? 0) / 2)
-  const startsOnControl = await page.evaluate(
-    (at) =>
-      document
-        .elementFromPoint(5, at)
-        ?.closest('[data-testid="sortable-block"], button, a, [role="button"]') != null,
-    y,
-  )
-  expect(startsOnControl, 'swipe start lands on a control').toBe(false)
+  // The swipe starts in the gutter below the header, on nothing that takes
+  // touches itself: block rows, task checkboxes and the day's icon buttons
+  // all reach into the gutter (#5929).
+  await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
+  const header = await page.locator('main[data-slot="sidebar-inset"] > header').boundingBox()
+  if (header == null) throw new Error('the app header has no box')
+  const y = await page.evaluate((top) => {
+    for (let at = Math.ceil(top); at < innerHeight; at += 2) {
+      const hit = document.elementFromPoint(5, at)
+      if (hit?.closest('[data-testid="sortable-block"], button, a, [role="button"]') == null) {
+        return at
+      }
+    }
+    return null
+  }, header.y + header.height)
+  if (y == null) throw new Error('no gutter row free of controls to start the swipe on')
 
   const cdp = await page.context().newCDPSession(page)
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 5, y }] })
