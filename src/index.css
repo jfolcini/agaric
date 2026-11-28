@@ -1022,12 +1022,24 @@
   }
 }
 
+/* ── Pane gutter (responsive) ──────────────────────────────────────── */
+/* The view pane's padding (`App`'s scroller). The chrome above it and a sheet
+ * keep it too, so their text starts where the view's does. */
+:root {
+  --pane-gutter: 1rem;
+}
+@media (width >= 48rem) {
+  :root {
+    --pane-gutter: 1.5rem;
+  }
+}
+
 /* A block's leading controls, in block mode's row (`SortableBlock`) and page
  * mode's gutter alike, so a line's text lands at one x in both. The text starts
  * the column's edge, and what leads it hangs left of that edge
  * (`--block-hang`): the lane, which holds the grip (a 1em glyph and `p-0.5`)
  * and keeps 0.25rem clear of the box it starts; the gap; the text box's own
- * inset (`px-3`, `.ProseMirror`, `StaticBlock`), where the chevron sits. A
+ * inset (`.ProseMirror`, `StaticBlock`), where the chevron sits. A
  * task's checkbox (`task-marker`) starts on the edge, its `p-0.5` hanging, so
  * its text sits the checkbox, the gap and the inset further in
  * (`--block-task-shift`), and so does each block under a task, once per task
@@ -1100,16 +1112,13 @@
 }
 
 /* A column the outline's text starts (`PageHeader`, `PageEditor`, `JournalPage`):
- * where it meets the pane's padding (`p-4 md:p-6`, `App`), it keeps room inside
+ * where it meets the pane's padding (`--pane-gutter`), it keeps room inside
  * itself for what its blocks hang left of its edge (`--block-room`). A section
  * heading's button hangs its own `px-3`, as a block's text box hangs its
  * inset, so its chevron starts the edge. */
 @utility outline-column {
   --outline-margin: max(0px, (100% - var(--container-reading)) / 2);
-  padding-left: max(0px, calc(var(--block-room) - 1rem - var(--outline-margin)));
-  @media (width >= 48rem) {
-    padding-left: max(0px, calc(var(--block-room) - 1.5rem - var(--outline-margin)));
-  }
+  padding-left: max(0px, calc(var(--block-room) - var(--pane-gutter) - var(--outline-margin)));
   & .collapsible-panel-header {
     margin-left: -0.75rem;
   }
@@ -1391,7 +1400,7 @@
    On touch a shorter editor made a tap that blurred it grow the block, and the
    rows below slid from under the finger before the release. */
 .ProseMirror {
-  @apply px-3 py-1 outline-none;
+  @apply px-(--block-inset) py-1 outline-none;
   font-size: var(--agaric-font-size, 1rem);
   min-height: 1.75rem;
   line-height: 1.5;
@@ -1548,7 +1557,7 @@
   @apply select-none;
 }
 .page-mode-editor .page-block-metadata .block-metadata-row {
-  @apply gap-x-2.5 px-0;
+  @apply gap-x-3 px-0;
 }
 .page-mode-editor
   .page-block-metadata

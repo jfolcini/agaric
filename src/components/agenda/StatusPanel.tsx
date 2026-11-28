@@ -186,7 +186,7 @@ function BoundedStalenessNotice({ status }: { status: StatusInfo }): React.React
 
   return (
     <div
-      className="status-panel-stale mt-4 flex flex-col gap-1 rounded-md border border-alert-warning-border bg-alert-warning p-4 text-sm text-alert-warning-foreground"
+      className="status-panel-stale mt-4 flex flex-col gap-1 rounded-md border border-alert-warning-border bg-alert-warning p-3 text-sm text-alert-warning-foreground"
       data-testid="status-panel-stale"
     >
       <div className="flex items-start gap-2">
@@ -208,7 +208,7 @@ function ExportRefusedNotice({ className }: { className?: string }): React.React
   return (
     <div
       className={cn(
-        'flex flex-col gap-1 rounded-md border border-alert-warning-border bg-alert-warning p-4 text-sm text-alert-warning-foreground',
+        'flex flex-col gap-1 rounded-md border border-alert-warning-border bg-alert-warning p-3 text-sm text-alert-warning-foreground',
         className,
       )}
       data-testid="export-refused-notice"
@@ -354,7 +354,7 @@ export function StatusPanel(): React.ReactElement {
             </dl>
 
             {hasErrors && (
-              <div className="status-panel-errors mt-4 flex flex-col gap-1 rounded-md border border-alert-error-border bg-alert-error p-4 text-sm text-alert-error-foreground">
+              <div className="status-panel-errors mt-4 flex flex-col gap-1 rounded-md border border-alert-error-border bg-alert-error p-3 text-sm text-alert-error-foreground">
                 <div className="flex items-start gap-2">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                   <p>{errorSummaryText({ fgErrors, bgErrors }, t)}</p>

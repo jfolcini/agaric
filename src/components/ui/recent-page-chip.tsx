@@ -32,12 +32,12 @@ export type RecentPageChipProps = React.ComponentProps<'button'> & { asChild?: b
 const chipClass = cn(
   // base
   'inline-flex h-7 min-w-0 max-w-[160px] shrink-0 items-center gap-1.5',
-  'rounded-md border px-2.5 text-xs',
+  'rounded-md border px-3 text-xs',
   'transition-colors',
   // touch — the buttons' one 36 px height and 14 px label, and room for that
   // label; the rest of the 44 px target is invisible, inside the strip's
   // vertical padding.
-  'coarse:h-9 coarse:max-w-48 coarse:px-3 coarse:text-sm touch-hit-area',
+  'coarse:h-9 coarse:max-w-48 coarse:text-sm touch-hit-area',
   // rest state — visible chrome
   'border-border/60 bg-secondary/40 text-muted-foreground',
   // hover — clearer interactive state

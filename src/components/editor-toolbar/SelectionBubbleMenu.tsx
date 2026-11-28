@@ -474,11 +474,7 @@ export function SelectionBubbleMenu({
         sheetTitle={t('toolbar.link')}
       >
         <PopoverAnchor virtualRef={virtualAnchorRef} />
-        <PopoverContent
-          align="start"
-          className="w-72 max-w-[calc(100vw-2rem)] p-3"
-          data-editor-portal
-        >
+        <PopoverContent align="start" className="w-72 max-w-[calc(100vw-2rem)]" data-editor-portal>
           <LinkEditPopover
             editor={editor}
             isEditing={isEditingLink}
@@ -491,7 +487,7 @@ export function SelectionBubbleMenu({
       </Popover>
       <Popover open={colorPopoverOpen} onOpenChange={setColorPopoverOpen}>
         <PopoverAnchor virtualRef={virtualAnchorRef} />
-        <PopoverContent align="start" className="w-auto p-1.5" data-editor-portal>
+        <PopoverContent align="start" className="w-auto p-1" data-editor-portal>
           <HighlightColorPicker editor={editor} onPick={() => setColorPopoverOpen(false)} />
         </PopoverContent>
       </Popover>

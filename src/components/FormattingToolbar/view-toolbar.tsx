@@ -104,7 +104,7 @@ export function ViewToolbarSlot({ room }: { room: boolean }): React.ReactElement
         <div
           onBlur={onBlur}
           onKeyDown={onKeyDown}
-          className="pointer-events-auto absolute -inset-x-4 -top-4 h-7 border-b border-border/40 bg-background px-4 md:-inset-x-6 md:-top-6 md:px-6"
+          className="pointer-events-auto absolute -inset-x-(--pane-gutter) -top-(--pane-gutter) h-7 border-b border-border/40 bg-background px-(--pane-gutter)"
         >
           {shown.bar}
         </div>

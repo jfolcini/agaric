@@ -65,6 +65,7 @@ import type * as React from 'react'
 import { Fragment, useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { menuRowVariants } from '@/components/ui/menu-row'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { TruncatedText } from '@/components/ui/truncated-text'
 import { cn } from '@/lib/utils'
@@ -362,12 +363,7 @@ function OverflowPopover({ items, ariaLabel }: OverflowPopoverProps): React.Reac
                 role="menuitem"
                 tabIndex={-1}
                 data-breadcrumb-overflow-item={item.testId ?? item.id}
-                className={cn(
-                  'flex w-full items-center rounded-sm px-2 py-1 text-left text-xs',
-                  'text-muted-foreground transition-colors',
-                  'hover:bg-accent hover:text-accent-foreground',
-                  'focus-ring-visible',
-                )}
+                className={cn(menuRowVariants(), 'text-xs text-muted-foreground')}
               >
                 <TruncatedText>{item.label}</TruncatedText>
               </button>

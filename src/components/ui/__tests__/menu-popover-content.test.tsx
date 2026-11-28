@@ -4,7 +4,7 @@
  * Validates:
  *  - displayName is set
  *  - Renders the canonical menu width + viewport clamp by default
- *  - Defaults to the floating-menu `p-1`, not PopoverContent's form `p-4`
+ *  - Defaults to the floating-menu `p-1`, not PopoverContent's form `p-3`
  *  - Caller-supplied className flows through (e.g., padding overrides)
  *  - Preserves the underlying `data-slot="popover-content"` attribute so
  *    e2e selectors that target Radix popovers continue to match
@@ -38,7 +38,7 @@ describe('MenuPopoverContent', () => {
     expect(root?.className).toContain('max-w-[calc(100vw-1.5rem)]')
   })
 
-  it('defaults to the floating-menu p-1 instead of the popover p-4', async () => {
+  it('defaults to the floating-menu p-1 instead of the popover p-3', async () => {
     render(
       <Popover defaultOpen>
         <PopoverTrigger>Open</PopoverTrigger>
@@ -49,7 +49,7 @@ describe('MenuPopoverContent', () => {
     const content = await screen.findByText('Default padding')
     const root = content.closest('[data-slot="popover-content"]')
     expect(root?.classList.contains('p-1')).toBe(true)
-    expect(root?.classList.contains('p-4')).toBe(false)
+    expect(root?.classList.contains('p-3')).toBe(false)
   })
 
   it('lets a caller className override the default padding but keep the width', async () => {
@@ -65,7 +65,6 @@ describe('MenuPopoverContent', () => {
     expect(root?.className).toContain('w-64')
     expect(root?.classList.contains('p-3')).toBe(true)
     expect(root?.classList.contains('p-1')).toBe(false)
-    expect(root?.classList.contains('p-4')).toBe(false)
   })
 
   it('forwards ref to the underlying content element', async () => {

@@ -37,7 +37,7 @@ const buttonVariants = cva(
         // of buttons reads as one height however long each label is.
         default: 'h-9 gap-1.5 px-4 py-2 touch-hit-area',
         sm: 'h-8 gap-1.5 rounded-md px-3 coarse:h-9 coarse:text-sm touch-hit-area',
-        xs: 'h-7 gap-1 rounded-md px-2.5 text-xs [:where(&)_svg]:size-3 coarse:h-9 coarse:px-3 coarse:text-sm coarse:[:where(&)_svg]:size-4 touch-hit-area',
+        xs: 'h-7 gap-1 rounded-md px-3 text-xs [:where(&)_svg]:size-3 coarse:h-9 coarse:text-sm coarse:[:where(&)_svg]:size-4 touch-hit-area',
         // On a coarse pointer an icon button is 36 px like the rest, with a
         // 20 px glyph and its 44 px target invisible (`touch-hit-area`).
         icon: 'size-9 coarse:[:where(&)_svg]:size-5 touch-hit-area',

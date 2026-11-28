@@ -101,7 +101,7 @@ export function SelectOptionsPopover({ propKey, state }: SelectOptionsPopoverPro
         </Button>
       </PopoverTrigger>
       <PopoverContent
-        className="w-64 space-y-2 p-3 max-w-[calc(100vw-2rem)]"
+        className="w-64 space-y-2 max-w-[calc(100vw-2rem)]"
         aria-label={t('pageProperty.editOptionsLabel', { key: propKey })}
       >
         <div

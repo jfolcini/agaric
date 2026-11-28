@@ -167,7 +167,7 @@ export function QuickAccessBar(): React.ReactElement | null {
               : SCROLL_ONLY_WHEN_WIDER.style,
           }}
         >
-          <div className="flex items-center gap-1.5 px-4 md:px-6 py-1">
+          <div className="flex items-center gap-1.5 px-(--pane-gutter) py-1">
             {visible.map((ref, idx) => {
               // Bug 1: recent chips are space-constrained
               // (`max-w-[160px]`) and full namespaced paths overflow fast, so

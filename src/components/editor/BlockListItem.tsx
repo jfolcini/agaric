@@ -238,7 +238,7 @@ function leadHangClass({
     showCompletedIcon === true ||
     (statusIconState !== undefined && !(statusIconState === 'DONE' && statusIconShowDone === false))
   return hasIcon
-    ? 'max-sm:pl-[calc(0.75rem+1.5rem)] max-sm:[&>svg]:-ml-[1.5rem] max-sm:[&>svg]:self-start max-sm:[&>svg]:mt-0.5'
+    ? 'max-sm:pl-[calc(0.75rem+1.5rem)] max-sm:[&>svg]:-ml-6 max-sm:[&>svg]:self-start max-sm:[&>svg]:mt-0.5'
     : undefined
 }
 

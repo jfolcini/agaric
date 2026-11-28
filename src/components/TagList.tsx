@@ -434,7 +434,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                         </Button>
                       </PopoverTrigger>
                       <PopoverContent
-                        className="w-auto p-3"
+                        className="w-auto"
                         align="start"
                         aria-label={t('tagList.colorTagLabel')}
                       >

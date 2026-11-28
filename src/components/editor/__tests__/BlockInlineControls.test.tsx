@@ -470,7 +470,7 @@ describe('BlockMetadataRow', () => {
   })
 
   it('renders null (no row) when the block has no metadata', () => {
-    // Also load-bearing for the row's alignment inset (#4495): `px-3` must
+    // Also load-bearing for the row's alignment inset (#4495): the inset must
     // never show up as a phantom gap under the text, and it cannot, because a
     // block with no metadata renders no row at all.
     const { container } = renderMetadata(makeMetaProps())

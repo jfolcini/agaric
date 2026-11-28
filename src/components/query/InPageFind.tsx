@@ -530,7 +530,7 @@ export function InPageFind({
           // `fixed` so it floats above whichever view is rendered
           // without each view having to participate. It hangs below the
           // App header, whose Today and Search it covered (#7040 O5).
-          'fixed top-14 right-2 md:right-4 z-50 flex flex-wrap items-center gap-1.5 rounded-md border border-border bg-popover px-2 py-1.5 shadow-(--shadow-floating)',
+          'fixed top-(--phone-header-h) right-2 md:right-4 z-50 flex flex-wrap items-center gap-1.5 rounded-md border border-border bg-popover px-2 py-1.5 shadow-(--shadow-floating)',
         variant === 'header' &&
           // The same strip in the header's flow; it wraps, and the header
           // grows, when the replace row opens.

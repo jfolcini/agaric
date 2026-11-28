@@ -138,6 +138,21 @@ describe('SearchInput', () => {
     expect(clear.className).not.toContain('coarse:h-(--touch-target)')
   })
 
+  it('searchIcon draws a hidden magnifier and pads the text clear of it', () => {
+    const { container } = render(
+      <SearchInput value="" onChange={() => {}} placeholder="Search" searchIcon />,
+    )
+    const icon = container.querySelector('svg.lucide-search')
+    expect(icon).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.getByPlaceholderText('Search')).toHaveClass('pl-9')
+  })
+
+  it('draws no magnifier and no left padding without searchIcon', () => {
+    const { container } = render(<SearchInput value="" onChange={() => {}} placeholder="Search" />)
+    expect(container.querySelector('svg.lucide-search')).not.toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Search')).not.toHaveClass('pl-9')
+  })
+
   it('has no a11y violations when the clear button is visible', async () => {
     const { container } = render(
       <SearchInput value="hello" onChange={() => {}} placeholder="Search" aria-label="Search" />,

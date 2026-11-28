@@ -91,7 +91,7 @@ describe('PageSourcePreview', () => {
     ).toEqual(['Quick Notes', 'Brand New'])
     expect(within(first as HTMLElement).getByTestId('tag-ref-chip')).toHaveTextContent('work')
     expect(within(first as HTMLElement).getByRole('group')).toHaveTextContent(/1/)
-    expect(child).toHaveStyle({ marginInlineStart: '1.5rem' })
+    expect((child as HTMLElement).style.marginInlineStart).toBe('calc(var(--indent-width) * 1)')
     expect(within(child as HTMLElement).getByText('bold').tagName).toBe('STRONG')
     expect(screen.getAllByTestId('property-chip')[0]).toHaveTextContent('[gs]')
   })
@@ -144,10 +144,10 @@ describe('PageSourcePreview', () => {
     ])
     expect(within(blocks[0] as HTMLElement).getByRole('heading')).toHaveTextContent('Heading')
     expect(blocks.map((block) => block.style.marginInlineStart)).toEqual([
-      '0rem',
-      '0rem',
-      '0rem',
-      '1.5rem',
+      'calc(var(--indent-width) * 0)',
+      'calc(var(--indent-width) * 0)',
+      'calc(var(--indent-width) * 0)',
+      'calc(var(--indent-width) * 1)',
     ])
   })
 

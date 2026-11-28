@@ -119,7 +119,7 @@ function InfoPopover(props: InfoPopoverProps): React.ReactElement {
       </PopoverTrigger>
       <PopoverContent
         aria-labelledby={triggerId}
-        className="w-auto max-w-xs p-3 text-sm"
+        className="w-auto max-w-xs text-sm"
         onCloseAutoFocus={(e) => {
           if (closedByAnother.current) e.preventDefault()
         }}

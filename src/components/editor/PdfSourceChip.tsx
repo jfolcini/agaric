@@ -79,7 +79,7 @@ export function PdfSourceChip({ attachmentId, page }: PdfSourceChipProps): React
     <>
       <button
         type="button"
-        className="pdf-source-chip touch-hit-area focus-ring-visible flex min-w-0 items-center gap-0.5 rounded-sm px-1.5 py-0.5 text-xs font-medium leading-none select-none cursor-pointer bg-muted text-muted-foreground hover:bg-accent max-sm:px-2.5"
+        className="pdf-source-chip touch-hit-area focus-ring-visible flex min-w-0 items-center gap-0.5 rounded-sm px-1.5 py-0.5 text-xs font-medium leading-none select-none cursor-pointer bg-muted text-muted-foreground hover:bg-accent max-sm:px-3"
         aria-label={label}
         // #1498: keep the editor focused, its caret where it was, through the click.
         onMouseDown={(e) => e.preventDefault()}

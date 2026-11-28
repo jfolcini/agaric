@@ -254,20 +254,14 @@ export function PropertyDefinitionsList(): React.ReactElement {
       </div>
 
       {/* Search input */}
-      <div className="relative">
-        <Search
-          className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
-          aria-hidden="true"
-        />
-        <SearchInput
-          value={searchFilter}
-          onChange={(e) => setSearchFilter(e.target.value)}
-          placeholder={t('propertiesView.search')}
-          aria-label={t('propertiesView.search')}
-          className="pl-8"
-          clearAriaLabelKey="propertiesView.clearSearch"
-        />
-      </div>
+      <SearchInput
+        searchIcon
+        value={searchFilter}
+        onChange={(e) => setSearchFilter(e.target.value)}
+        placeholder={t('propertiesView.search')}
+        aria-label={t('propertiesView.search')}
+        clearAriaLabelKey="propertiesView.clearSearch"
+      />
 
       {/* Create form */}
       <form

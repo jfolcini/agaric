@@ -6,6 +6,8 @@
 
 import type React from 'react'
 
+import { menuRowVariants } from '@/components/ui/menu-row'
+
 export function FilterCategoryGroup({
   label,
   children,
@@ -32,15 +34,14 @@ export function FilterMenuItem({
   description?: string
 }): React.ReactElement {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground focus-ring-visible"
-    >
-      {children}
-      {description && (
-        <span className="block text-xs font-normal text-muted-foreground">{description}</span>
-      )}
+    <button type="button" onClick={onClick} className={menuRowVariants()}>
+      {/* One flex item, so the description stacks under the label. */}
+      <span>
+        {children}
+        {description && (
+          <span className="block text-xs font-normal text-muted-foreground">{description}</span>
+        )}
+      </span>
     </button>
   )
 }

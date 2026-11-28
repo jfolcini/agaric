@@ -179,7 +179,7 @@ export function ImageBubbleMenu({ editor }: { editor: Editor }): React.ReactElem
               </IconButton>
               <PopoverContent
                 align="start"
-                className="w-72 max-w-[calc(100vw-2rem)] p-2"
+                className="w-72 max-w-[calc(100vw-2rem)]"
                 aria-label={t('editor.image.editAlt')}
                 data-editor-portal
                 onCloseAutoFocus={(e) => e.preventDefault()}

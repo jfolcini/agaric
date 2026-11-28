@@ -278,7 +278,7 @@ export function SettingsView(): React.ReactElement {
                     <button
                       type="button"
                       id={`settings-section-${tab}`}
-                      className="flex min-h-(--touch-target) w-full items-center gap-3 rounded-[inherit] px-3 py-2.5 text-left text-sm focus-ring-visible"
+                      className="flex min-h-(--touch-target) w-full items-center gap-3 rounded-[inherit] p-3 text-left text-sm focus-ring-visible"
                       onClick={() => openSection(tab)}
                     >
                       <span className="min-w-0 flex-1">{t(TAB_LABEL_KEYS[tab])}</span>

@@ -21,7 +21,7 @@
  * (which resolves to `0` on desktop, and on Android, where the webview is
  * already inset natively) lets the stripe clear the inset everywhere. Mirrors
  * the pattern already used by App.tsx for the bottom inset
- * (`pb-[calc(1rem+var(--safe-area-bottom))]`).
+ * (`pb-[calc(var(--pane-gutter)+var(--safe-area-bottom))]`).
  */
 
 import type React from 'react'

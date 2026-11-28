@@ -233,7 +233,7 @@ function PriorityBadge({
   const badge = (
     <span
       className={cn(
-        'inline-flex items-center justify-center rounded px-1.5 py-0.75 text-block-chip font-bold leading-none max-sm:px-2.5',
+        'inline-flex items-center justify-center rounded px-1.5 py-0.75 text-block-chip font-bold leading-none max-sm:px-3',
         priorityColor(priority),
       )}
     >
@@ -489,7 +489,7 @@ export const BlockInlineControls = React.memo(
           // centres on the first line of a wrapped block (#5332).
           'inline-controls flex items-center flex-shrink-0 gap-1 min-h-block-line max-sm:flex-shrink max-sm:w-auto max-sm:gap-x-1',
           // The checkbox starts on the text edge of a plain line (the text box's
-          // `px-3`), its own `p-0.5` hanging before it (`--block-controls-lead`).
+          // `--block-inset`), its own `p-0.5` hanging before it (`--block-controls-lead`).
           task !== null && 'pl-[calc(var(--block-controls-lead)-0.125rem)]',
           // Touch: its larger box takes the right padding, and the row's gap is all
           // that parts it from the text box, so the editing frame starts clear of it.
@@ -581,29 +581,13 @@ export const BlockMetadataRow = React.memo(
     if (!hasContent) return null
 
     return (
-      // `px-3` is NOT decoration — it is what makes this row line up with the
-      // block's text, which is the whole point of it sitting here (see the
-      // content-column comment in `SortableBlock.tsx`: "left-aligned with the
-      // text", user feedback 2026-06-20). The row and the text are siblings in
-      // one flex column, so they share a left EDGE, but the text is inset from
-      // that edge by its own horizontal padding and the row was not — leaving
-      // the chips ~12px left of the first character.
-      //
-      // The inset is `px-3` in BOTH render paths, so one value matches both and
-      // the alignment cannot shift when a block gains or loses focus:
-      //   - unfocused: `block-static` in `StaticBlock.tsx` (`px-3 py-1`)
-      //   - focused:   `.ProseMirror` in `index.css` (`@apply px-3 py-1`)
-      // `px-3` rather than `pl-3` so the chips also wrap against the same right
-      // boundary the text wraps against.
-      //
-      // That makes three copies of one value, the third of which is in CSS and
-      // cannot import a shared constant.
-      // `editor/__tests__/metadata-row-text-alignment.test.tsx` (describe:
-      // "metadata row / block text alignment") pins the relationship rather
-      // than the literal, so changing the inset in one place fails loudly
-      // instead of drifting.
+      // The row shares the text's left edge (siblings in one flex column), so it
+      // takes the text box's inset, `--block-inset`, which both render paths use
+      // (`StaticBlock`, `.ProseMirror`): the chips line up under the first
+      // character focused or not. On both sides, so they wrap where the text
+      // wraps. `metadata-row-text-alignment.test.tsx` pins the relationship.
       <div
-        className="block-metadata-row flex items-center flex-wrap gap-1 mt-0.5 px-3"
+        className="block-metadata-row flex items-center flex-wrap gap-1 mt-0.5 px-(--block-inset)"
         data-testid="block-metadata-row"
       >
         {priority && (

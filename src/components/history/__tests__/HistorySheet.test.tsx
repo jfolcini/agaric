@@ -100,7 +100,7 @@ describe('HistorySheet', () => {
     // slot, so query the body slot to reach the scroll container.
     const scrollRoot = panel.closest('[data-slot="sheet-body"]')
     expect(scrollRoot).not.toBeNull()
-    expect(scrollRoot).toHaveClass('flex-1', 'min-h-0', '-mx-4', 'md:-mx-6')
+    expect(scrollRoot).toHaveClass('flex-1', 'min-h-0', '-mx-(--pane-gutter)')
   })
 
   it('has no a11y violations when open', async () => {

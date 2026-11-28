@@ -408,11 +408,7 @@ export function AddFilterPopover({
         // The facet list can exceed the viewport on short windows (each menu
         // item carries a two-line description). The base PopoverContent caps
         // height at the collision-aware available height and scrolls its own
-        // overflow (#1960, #4313), so nothing here has to arrange that — this
-        // only tightens the padding for a menu of rows. (No `w-72` either: the
-        // base already sets it, and repeating it just makes twMerge re-resolve
-        // the same class.)
-        className="p-2"
+        // overflow (#1960, #4313), so nothing here has to arrange that.
         aria-label={t('pageBrowser.filter.addFilterDialogLabel')}
       >
         {warnManyFilters && (

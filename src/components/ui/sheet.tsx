@@ -19,16 +19,15 @@ import { cn } from '@/lib/utils'
 // `flex flex-col overflow-hidden` and the padding are baked into the base so
 // consumers can drop a `<SheetBody>` slot and get a properly height-constrained
 // scrollable region without re-stating padding / overflow at every call
-// site — mirrors the DialogContent shape in `./dialog-shared.ts`. Below `md`
-// the padding is the app's 16 px phone gutter (`App.tsx`), so a sheet's text
-// starts where the view's does; wider, a sheet is a side panel or a phone's
-// held sideways. A consumer overriding it overrides `md:` too.
+// site — mirrors the DialogContent shape in `./dialog-shared.ts`. The padding
+// is the view's gutter (`--pane-gutter`), so a sheet's text starts where the
+// view's does.
 //
 // A closed sheet takes no taps: until it unmounts it can still sit where it
 // was open (a busy main thread starts its exit late, and it springs back once
 // the exit ends), and a row there took the tap meant for the view below (#6347).
 const SHEET_CONTENT_BASE =
-  'fixed z-50 flex flex-col overflow-hidden gap-4 bg-popover text-popover-foreground outline-none p-4 md:p-6 shadow-(--shadow-overlay) transition ease-in-out data-[state=closed]:pointer-events-none data-[state=closed]:animate-out data-[state=closed]:duration-moderate data-[state=open]:animate-in data-[state=open]:duration-moderate'
+  'fixed z-50 flex flex-col overflow-hidden gap-4 bg-popover text-popover-foreground outline-none p-(--pane-gutter) shadow-(--shadow-overlay) transition ease-in-out data-[state=closed]:pointer-events-none data-[state=closed]:animate-out data-[state=closed]:duration-moderate data-[state=open]:animate-in data-[state=open]:duration-moderate'
 
 function Sheet({ ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
   return <SheetPrimitive.Root data-slot="sheet" {...props} />
@@ -147,7 +146,7 @@ const SheetContent = ({
           data-slot="sheet-close"
           className={cn(
             closeButtonClassName,
-            'top-4 right-4 md:top-6 md:right-6 data-[state=open]:bg-secondary',
+            'top-(--pane-gutter) right-(--pane-gutter) data-[state=open]:bg-secondary',
           )}
         >
           <CloseButtonIcon />
@@ -243,8 +242,8 @@ const SheetBody = ({ ref, className, children, dir, ...props }: SheetBodyProps) 
     // 'ltr' | 'rtl' (no `undefined` under exactOptionalPropertyTypes), so
     // forward it only when it's a valid direction.
     {...(dir === 'ltr' || dir === 'rtl' ? { dir } : {})}
-    className={cn('flex-1 min-h-0 -mx-4 md:-mx-6 -my-1', className)}
-    viewportClassName={cn(DIALOG_BODY_VIEWPORT_CLASS, 'px-4 md:px-6')}
+    className={cn('flex-1 min-h-0 -mx-(--pane-gutter) -my-1', className)}
+    viewportClassName={cn(DIALOG_BODY_VIEWPORT_CLASS, 'px-(--pane-gutter)')}
     {...props}
   >
     <div className="space-y-4 min-w-0">{children}</div>

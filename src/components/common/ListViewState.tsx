@@ -53,7 +53,7 @@ export function ListErrorState({
 }): React.ReactElement {
   return (
     <div
-      className="flex items-center justify-between gap-3 rounded-lg border border-alert-error-border bg-alert-error p-4 text-alert-error-foreground"
+      className="flex items-center justify-between gap-3 rounded-lg border border-alert-error-border bg-alert-error p-3 text-alert-error-foreground"
       role="alert"
       data-testid={testId}
     >

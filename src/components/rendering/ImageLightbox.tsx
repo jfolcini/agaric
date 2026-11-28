@@ -135,7 +135,7 @@ export function ImageLightbox({
 
         {imgError ? (
           <div
-            className="flex max-w-[90vw] flex-col items-center gap-2 px-6 py-10 text-center text-white/80"
+            className="flex max-w-[90vw] flex-col items-center gap-2 px-6 py-8 text-center text-white/80"
             data-testid="lightbox-image-error"
           >
             <p className="text-sm font-medium">{current.alt}</p>

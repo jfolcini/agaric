@@ -25,6 +25,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import { menuRowVariants } from '@/components/ui/menu-row'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import { unwrap } from '@/lib/app-error'
@@ -599,7 +600,7 @@ function PagePickerResults({
             <button
               key={page.id}
               type="button"
-              className="rounded-sm px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-ring-visible truncate"
+              className={menuRowVariants()}
               onClick={() => onSelect(page.id)}
             >
               {/* `PageHeading.content` IS the page title; prefer it. Fall back
@@ -608,7 +609,7 @@ function PagePickerResults({
                   the search filter matches on, so display and filtering agree.
                   The chip/value then resolves the id BACK to a title via the
                   SAME resolver after selection. */}
-              {labelFor(page)}
+              <span className="truncate">{labelFor(page)}</span>
             </button>
           ))
         )}
@@ -797,10 +798,10 @@ export function TagPickerEditor({
               <button
                 key={tag.tag_id}
                 type="button"
-                className="rounded-sm px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-ring-visible truncate"
+                className={menuRowVariants()}
                 onClick={() => onSelect(tag.tag_id)}
               >
-                {tag.name}
+                <span className="truncate">{tag.name}</span>
               </button>
             ))
           )}

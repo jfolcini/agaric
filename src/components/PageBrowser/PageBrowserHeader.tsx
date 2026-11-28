@@ -13,7 +13,7 @@
  * as props; the view buttons read the navigation store themselves.
  */
 
-import { ArrowUpDown, MoreVertical, Plus, Search } from 'lucide-react'
+import { ArrowUpDown, MoreVertical, Plus } from 'lucide-react'
 import type React from 'react'
 import { type RefObject, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -205,20 +205,15 @@ export function PageBrowserHeader({
           typed in. A phone keeps one row: the search field shrinks, and the
           count, saved views and view buttons go. */}
       <div className={cn('flex items-center gap-2', !isMobile && 'flex-wrap')}>
-        <div className={cn('relative flex-1', isMobile ? 'min-w-0' : 'min-w-[12rem]')}>
-          <Search
-            className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
-            aria-hidden="true"
-          />
-          <SearchInput
-            ref={searchInputRef}
-            value={filterText}
-            onChange={(e) => onFilterTextChange(e.target.value)}
-            placeholder={t('pageBrowser.searchPlaceholder')}
-            className="pl-8"
-            aria-label={t('pageBrowser.searchPlaceholder')}
-          />
-        </div>
+        <SearchInput
+          ref={searchInputRef}
+          searchIcon
+          wrapperClassName={cn('flex-1', isMobile ? 'min-w-0' : 'min-w-[12rem]')}
+          value={filterText}
+          onChange={(e) => onFilterTextChange(e.target.value)}
+          placeholder={t('pageBrowser.searchPlaceholder')}
+          aria-label={t('pageBrowser.searchPlaceholder')}
+        />
         {showSortAndViews && (
           <>
             {countLabel != null && !isMobile && (

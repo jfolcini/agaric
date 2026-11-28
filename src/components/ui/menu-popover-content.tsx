@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils'
  * so picking one canonical class string is what gets us consistency.
  *
  * Canonical: `w-64 max-w-[calc(100vw-1.5rem)] p-1`. `p-1` is the floating-menu
- * padding (rows carry their own `px-2`); `PopoverContent`'s `p-4` is for
+ * padding (rows carry their own `px-2`); `PopoverContent`'s `p-3` is for
  * form-style popovers. Any consumer-supplied `className` flows through
  * `cn()` (tailwind-merge), so a caller that passes `w-72` or `p-3` overrides
  * the default — but the *default* covers ~95% of menu sites without the

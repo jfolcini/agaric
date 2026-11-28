@@ -283,7 +283,7 @@ export function TabBar(): React.ReactElement | null {
     // chrome stack aligns vertically. The hairline is drawn twice, under the
     // caret and on the tablist, because each tab overlaps the tablist's own.
     <div className="flex min-w-0 bg-muted/30">
-      <div className="flex shrink-0 border-b border-border pl-4 md:pl-6 pt-1">
+      <div className="flex shrink-0 border-b border-border pl-(--pane-gutter) pt-1">
         <TabSwitcher
           tabs={tabs}
           activeTabIndex={activeTabIndex}
@@ -310,7 +310,7 @@ export function TabBar(): React.ReactElement | null {
             <div
               role="tablist"
               aria-label={t('tabs.tabList')}
-              className="flex items-end gap-1 border-b border-border pr-4 md:pr-6 pt-1 min-w-0"
+              className="flex items-end gap-1 border-b border-border pr-(--pane-gutter) pt-1 min-w-0"
             >
               {tabs.map((tab, i) => {
                 // Bug 1: tabs are space-constrained (`max-w-[120px]

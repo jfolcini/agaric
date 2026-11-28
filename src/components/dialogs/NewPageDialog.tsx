@@ -234,7 +234,7 @@ export function NewPageDialog({
             </p>
           )}
           {existing && (
-            <output className="block rounded-md border border-alert-warning-border bg-alert-warning p-2 text-sm text-alert-warning-foreground">
+            <output className="block rounded-md border border-alert-warning-border bg-alert-warning p-3 text-sm text-alert-warning-foreground">
               {existing.alias
                 ? t('newPageDialog.aliasExists', {
                     alias: existing.alias,

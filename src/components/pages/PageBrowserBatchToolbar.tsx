@@ -476,7 +476,7 @@ export function PageBrowserBatchToolbar({
     <BatchActionToolbar
       selectedCount={selectedIds.length}
       listRef={listRef}
-      className="page-browser-batch-toolbar gap-3 p-3"
+      className="page-browser-batch-toolbar"
       suppressRangeSelectHint
     >
       <Button variant="outline" size="sm" onClick={onSelectAll} disabled={busy}>

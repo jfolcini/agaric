@@ -91,7 +91,7 @@ import { cn } from '@/lib/utils'
 //   with clipping in a genuinely tiny band.
 //
 // 8rem (128px) is the smallest box that can still show two coarse-pointer
-// rows: 2 × 44px + this primitive's own `p-4` (32px) + 1px borders = 122px,
+// rows: 2 × 44px + this primitive's own `p-3` (24px) + 1px borders = 114px,
 // rounded up to the nearest rem step. It is deliberately NOT derived from
 // `e2e/formatting-toolbar-mobile.spec.ts`'s `MIN_USABLE_POPOVER_HEIGHT`. An
 // earlier revision said 8rem was picked *to clear* that constant, which had
@@ -103,7 +103,7 @@ import { cn } from '@/lib/utils'
 // subtraction actually corrupts — so the two numbers are independent again
 // and this floor cannot mask the regression it sits next to.
 const POPOVER_CONTENT_BASE =
-  'bg-popover text-popover-foreground z-50 w-72 max-w-[calc(100vw-2rem)] max-h-[max(var(--radix-popover-content-available-height,calc(100dvh-4rem)),8rem)] overflow-y-auto overscroll-contain rounded-md border p-4 shadow-(--shadow-floating) outline-hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2'
+  'bg-popover text-popover-foreground z-50 w-72 max-w-[calc(100vw-2rem)] max-h-[max(var(--radix-popover-content-available-height,calc(100dvh-4rem)),8rem)] overflow-y-auto overscroll-contain rounded-md border p-3 shadow-(--shadow-floating) outline-hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2'
 
 /**
  * Default collision padding: 4px, so a popover never sits flush against an edge
